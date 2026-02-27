@@ -108,9 +108,39 @@ function clusterByVec(words, eng, k) {
   return result;
 }
 
+// ── detectSegProtocol ──
+// Scans text for ---SEG:Label--- markers.
+// Returns [{label, text}] or null if no markers found.
+// Text before first marker becomes segment "Pre\u00E1mbulo".
+function detectSegProtocol(text) {
+  var re = /---SEG:(.+?)---/g;
+  var m;
+  var markers = [];
+  while ((m = re.exec(text)) !== null) {
+    markers.push({ idx: m.index, label: m[1].trim(), end: m.index + m[0].length });
+  }
+  if (markers.length === 0) return null;
+
+  var segs = [];
+  // Text before first marker
+  var preBefore = text.substring(0, markers[0].idx).trim();
+  if (preBefore.length > 0) {
+    segs.push({ label: "Pre\u00E1mbulo", text: preBefore });
+  }
+  for (var i = 0; i < markers.length; i++) {
+    var start = markers[i].end;
+    var end = (i + 1 < markers.length) ? markers[i + 1].idx : text.length;
+    var body = text.substring(start, end).trim();
+    if (body.length > 0) {
+      segs.push({ label: markers[i].label, text: body });
+    }
+  }
+  return segs.length > 0 ? segs : null;
+}
+
 // ── segmentText ──
 // Splits content tokens (non-stop) into N equal segments.
-// Returns [{idx, tokens, freqMap}]
+// Returns [{idx, tokens, freqMap, normFreqMap, label}]
 function segmentText(enriched, numSegs) {
   var content = [];
   for (var i = 0; i < enriched.length; i++) {
@@ -127,12 +157,57 @@ function segmentText(enriched, numSegs) {
       var lem = tokens[t].lemma;
       fm[lem] = (fm[lem] || 0) + 1;
     }
-    segs.push({ idx: s, tokens: tokens, freqMap: fm });
+    segs.push({ idx: s, tokens: tokens, freqMap: fm, normFreqMap: {}, label: null });
+  }
+  // Compute normalized frequency per segment
+  for (var ns = 0; ns < segs.length; ns++) {
+    var seg = segs[ns];
+    var total = seg.tokens.length;
+    if (total > 0) {
+      for (var nw in seg.freqMap) {
+        if (seg.freqMap.hasOwnProperty(nw)) {
+          seg.normFreqMap[nw] = seg.freqMap[nw] / total;
+        }
+      }
+    }
   }
   return segs;
 }
 
-// ── selectWords ──
+// ── segmentTextCustom ──
+// Splits enriched tokens according to custom segment boundaries.
+// customSegs: [{label, startToken, endToken}] — token index ranges in enriched (content only)
+// Returns [{idx, tokens, freqMap, normFreqMap, label}]
+function segmentTextCustom(enriched, customSegs) {
+  var content = [];
+  for (var i = 0; i < enriched.length; i++) {
+    if (!enriched[i].stop) content.push(enriched[i]);
+  }
+
+  var segs = [];
+  for (var s = 0; s < customSegs.length; s++) {
+    var cs = customSegs[s];
+    var tokens = content.slice(cs.startToken, cs.endToken);
+    var fm = {};
+    for (var t = 0; t < tokens.length; t++) {
+      var lem = tokens[t].lemma;
+      fm[lem] = (fm[lem] || 0) + 1;
+    }
+    var normFm = {};
+    var total = tokens.length;
+    if (total > 0) {
+      for (var nw in fm) {
+        if (fm.hasOwnProperty(nw)) {
+          normFm[nw] = fm[nw] / total;
+        }
+      }
+    }
+    segs.push({ idx: s, tokens: tokens, freqMap: fm, normFreqMap: normFm, label: cs.label });
+  }
+  return segs;
+}
+
+// ── buildCustomSegBoundaries ──
 // Picks words based on mode with stable tiebreaking.
 // mode: "seeds" | "recurrentes" | "persistentes"
 // sortMode: "freq" | "relevance"
@@ -193,25 +268,31 @@ function computeSegData(segments, nodeWords, eng, decay, relevanceMap) {
     for (var wi = 0; wi < nodeWords.length; wi++) {
       var w = nodeWords[wi];
       var baseFreq = seg.freqMap[w] || 0;
+      var normFreq = seg.normFreqMap[w] || 0;
 
       // Word2vec boost: if word absent, check if similar words are present
       var boost = 0;
+      var normBoost = 0;
       if (baseFreq === 0 && eng && eng.vec && eng.vec.isLoaded()) {
         for (var lem in seg.freqMap) {
           if (!seg.freqMap.hasOwnProperty(lem)) continue;
           var sim = eng.vec.similarity(w, lem);
           if (sim > 0.4) {
-            boost = Math.max(boost, sim * seg.freqMap[lem] * (decay || 0.5));
+            var rawB = sim * seg.freqMap[lem] * (decay || 0.5);
+            var normB = sim * (seg.normFreqMap[lem] || 0) * (decay || 0.5);
+            if (rawB > boost) { boost = rawB; normBoost = normB; }
           }
         }
       }
 
       var localAct = baseFreq + boost;
+      var localNormAct = normFreq + normBoost;
       var globalRel = (relevanceMap && relevanceMap[w]) ? relevanceMap[w] : 1;
 
       row[w] = {
         freq: localAct,
-        rel: globalRel * (localAct > 0 ? localAct : 0),
+        normFreq: localNormAct,
+        rel: globalRel * (localAct > 0 ? localNormAct : 0),
         act: localAct
       };
     }
@@ -253,8 +334,16 @@ function computeSegEmo(segments) {
 
 // ── computeFibras ──
 // Orchestrator. Returns all data needed for rendering.
-function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mode, topN, decay, sortMode) {
-  var segments = segmentText(enriched, numSegs);
+function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mode, topN, decay, sortMode, customSegBoundaries) {
+  var segments;
+  var hasCustomSegs = customSegBoundaries && customSegBoundaries.length > 0;
+
+  if (hasCustomSegs) {
+    segments = segmentTextCustom(enriched, customSegBoundaries);
+    numSegs = segments.length;
+  } else {
+    segments = segmentText(enriched, numSegs);
+  }
 
   var nodeWords;
   if (mode === "persistentes") {
@@ -288,12 +377,14 @@ function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mod
     if ((relevanceMap[ww] || 1) > maxRel) maxRel = relevanceMap[ww] || 1;
   }
   // Per-segment maxes (for node height normalization)
+  var maxSegNormFreq = 0;
   for (var si2 = 0; si2 < segData.length; si2++) {
     for (var wi2 = 0; wi2 < nodeWords.length; wi2++) {
       var entry = segData[si2][nodeWords[wi2]];
       if (entry) {
         if (entry.freq > maxSegFreq) maxSegFreq = entry.freq;
         if (entry.rel > maxSegRel) maxSegRel = entry.rel;
+        if (entry.normFreq > maxSegNormFreq) maxSegNormFreq = entry.normFreq;
       }
     }
   }
@@ -313,8 +404,10 @@ function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mod
     maxRel: maxRel || 1,
     maxSegFreq: maxSegFreq || 1,
     maxSegRel: maxSegRel || 1,
+    maxSegNormFreq: maxSegNormFreq || 1,
     decay: decay,
-    vecClusterMap: vecClusterMap
+    vecClusterMap: vecClusterMap,
+    hasCustomSegs: hasCustomSegs
   };
 }
 
@@ -367,9 +460,12 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
     } else {
       colX = padLeft + (c / (numCols - 1)) * chartW;
     }
+    var segIdx0 = winStart + c;
+    var segLabel = segments[segIdx0] ? segments[segIdx0].label : null;
     columns.push({
       x: colX,
-      segIdx: winStart + c
+      segIdx: segIdx0,
+      label: segLabel
     });
   }
 
@@ -393,6 +489,7 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
   // Normalization maxes for per-segment values
   var maxSegFreq = fibras.maxSegFreq;
   var maxSegRel = fibras.maxSegRel;
+  var maxSegNormFreq = fibras.maxSegNormFreq;
 
   // Compute node height based on primary metric (per segment)
   // Total available height divided among all words + gaps
@@ -441,21 +538,22 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
       var segIdx = winStart + c2;
       var segEntry = segData[segIdx] ? segData[segIdx][w] : null;
       var localFreq = segEntry ? segEntry.freq : 0;
+      var localNormFreq = segEntry ? segEntry.normFreq : 0;
       var localRel = segEntry ? segEntry.rel : 0;
       var isReal = segEntry ? segEntry.act > 0 : false;
 
-      // Primary metric controls height (per segment)
+      // Primary metric controls height (per segment, using normalized freq)
       // Secondary metric controls opacity (per segment)
       var primaryVal, secondaryVal, primaryNorm, secondaryNorm;
       if (sortMode === "relevance") {
         primaryVal = localRel;
-        secondaryVal = localFreq;
+        secondaryVal = localNormFreq;
         primaryNorm = maxSegRel > 0 ? localRel / maxSegRel : 0;
-        secondaryNorm = maxSegFreq > 0 ? localFreq / maxSegFreq : 0;
+        secondaryNorm = maxSegNormFreq > 0 ? localNormFreq / maxSegNormFreq : 0;
       } else {
-        primaryVal = localFreq;
+        primaryVal = localNormFreq;
         secondaryVal = localRel;
-        primaryNorm = maxSegFreq > 0 ? localFreq / maxSegFreq : 0;
+        primaryNorm = maxSegNormFreq > 0 ? localNormFreq / maxSegNormFreq : 0;
         secondaryNorm = maxSegRel > 0 ? localRel / maxSegRel : 0;
       }
 
@@ -631,6 +729,7 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
     maxFreq: maxFreq,
     maxRel: maxRel,
     numCols: numCols,
-    wordRank: wordRank
+    wordRank: wordRank,
+    hasCustomSegs: fibras.hasCustomSegs
   };
 }

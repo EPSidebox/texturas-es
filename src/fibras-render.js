@@ -380,23 +380,26 @@ function FibrasMinimap(props) {
     arousalPoints.push({ x: ax, y: ay });
   }
 
+  var showNav = numSegs > winSize;
+
   return React.createElement("div", {
     style: { display: "flex", alignItems: "center", gap: T.gap6 }
   },
-    // ◀ button
-    numSegs > winSize && React.createElement("button", {
-      onClick: function() { setWinStart(Math.max(0, winStart - 1)); },
-      disabled: winStart <= 0,
+    // ◀ button (always reserve space)
+    React.createElement("button", {
+      onClick: function() { if (showNav) setWinStart(Math.max(0, winStart - 1)); },
+      disabled: !showNav || winStart <= 0,
       style: {
         background: "transparent",
-        border: "1px solid " + T.borderLight,
-        color: winStart <= 0 ? T.textFaint : T.textMid,
+        border: "1px solid " + (showNav ? T.borderLight : "transparent"),
+        color: !showNav || winStart <= 0 ? T.textFaint : T.textMid,
         borderRadius: T.radius3,
         padding: "2px 6px",
         fontSize: T.fs12,
         fontFamily: T.fontMono,
-        cursor: winStart <= 0 ? "default" : "pointer",
-        flexShrink: 0
+        cursor: !showNav || winStart <= 0 ? "default" : "pointer",
+        flexShrink: 0,
+        visibility: showNav ? "visible" : "hidden"
       }
     }, "\u25C0"),
 
@@ -445,8 +448,8 @@ function FibrasMinimap(props) {
         })
       ),
 
-      // Navigator window (only if scrollable)
-      numSegs > winSize && React.createElement("div", {
+      // Navigator window (visible only if scrollable)
+      showNav && React.createElement("div", {
         style: {
           position: "absolute",
           left: navX,
@@ -461,20 +464,21 @@ function FibrasMinimap(props) {
       })
     ),
 
-    // ▶ button
-    numSegs > winSize && React.createElement("button", {
-      onClick: function() { setWinStart(Math.min(maxStart, winStart + 1)); },
-      disabled: winStart >= maxStart,
+    // ▶ button (always reserve space)
+    React.createElement("button", {
+      onClick: function() { if (showNav) setWinStart(Math.min(maxStart, winStart + 1)); },
+      disabled: !showNav || winStart >= maxStart,
       style: {
         background: "transparent",
-        border: "1px solid " + T.borderLight,
-        color: winStart >= maxStart ? T.textFaint : T.textMid,
+        border: "1px solid " + (showNav ? T.borderLight : "transparent"),
+        color: !showNav || winStart >= maxStart ? T.textFaint : T.textMid,
         borderRadius: T.radius3,
         padding: "2px 6px",
         fontSize: T.fs12,
         fontFamily: T.fontMono,
-        cursor: winStart >= maxStart ? "default" : "pointer",
-        flexShrink: 0
+        cursor: !showNav || winStart >= maxStart ? "default" : "pointer",
+        flexShrink: 0,
+        visibility: showNav ? "visible" : "hidden"
       }
     }, "\u25B6")
   );
@@ -561,6 +565,12 @@ function FibrasDocStack(props) {
   var _hw = useState(null);
   var hoveredWord = _hw[0], setHoveredWord = _hw[1];
 
+  // Segment label tooltip
+  var _segTip = useState(null);
+  var segTooltip = _segTip[0], setSegTooltip = _segTip[1];
+  var _segPin = useState(null);
+  var segPinned = _segPin[0], setSegPinned = _segPin[1];
+
   var layout = useMemo(function() {
     if (!fibras) return null;
     return buildWindowedLayout(
@@ -574,8 +584,16 @@ function FibrasDocStack(props) {
   // Chart width for minimap (match the Sankey area)
   var chartAreaW = canvasW - (layout ? layout.padLeft : 80) - 20;
 
+  // Segment label data for tooltip
+  var segLabels = layout ? layout.columns.map(function(col) {
+    return { segIdx: col.segIdx, x: col.x, label: col.label };
+  }) : [];
+
+  // Active tooltip (pinned takes precedence over hover)
+  var activeTooltip = segPinned || segTooltip;
+
   return React.createElement("div", {
-    style: { display: "flex", flexDirection: "column", gap: T.gap4 }
+    style: { display: "flex", flexDirection: "column", gap: T.gap4, position: "relative" }
   },
     // Doc label
     props.docLabel && React.createElement("div", {
@@ -603,6 +621,61 @@ function FibrasDocStack(props) {
       layout: layout,
       enabledEmos: enabledEmos
     }),
+
+    // Segment labels (React elements for tooltip support)
+    segLabels.length > 0 && React.createElement("div", {
+      style: { position: "relative", height: 16, width: canvasW }
+    },
+      segLabels.map(function(sl, sli) {
+        var displayLabel = sl.label ? "S" + (sl.segIdx + 1) : String(sl.segIdx + 1);
+        return React.createElement("span", {
+          key: sli,
+          onMouseEnter: function() { if (sl.label && !segPinned) setSegTooltip(sl); },
+          onMouseLeave: function() { if (!segPinned) setSegTooltip(null); },
+          onClick: function() {
+            if (!sl.label) return;
+            if (segPinned && segPinned.segIdx === sl.segIdx) { setSegPinned(null); }
+            else { setSegPinned(sl); }
+          },
+          style: {
+            position: "absolute",
+            left: sl.x,
+            top: 0,
+            transform: "translateX(-50%)",
+            fontSize: 9,
+            fontFamily: T.fontMono,
+            color: sl.label ? T.textMid : T.textDim,
+            cursor: sl.label ? "pointer" : "default"
+          }
+        }, displayLabel);
+      }),
+
+      // Tooltip
+      activeTooltip && React.createElement("div", {
+        style: {
+          position: "absolute",
+          left: Math.min(activeTooltip.x, canvasW - 220),
+          top: 18,
+          maxWidth: 200,
+          padding: T.pad8,
+          background: T.bg + "ee",
+          border: "1px solid " + (segPinned ? T.accent : T.borderLight),
+          borderRadius: T.radius4,
+          fontFamily: T.fontMono,
+          fontSize: T.fs10,
+          color: T.text,
+          zIndex: 50,
+          lineHeight: 1.5,
+          backdropFilter: "blur(2px)",
+          wordWrap: "break-word"
+        }
+      },
+        React.createElement("div", { style: { color: T.accent, marginBottom: 2, fontSize: 9 } },
+          "S" + (activeTooltip.segIdx + 1)
+        ),
+        activeTooltip.label
+      )
+    ),
 
     // Chart
     React.createElement(FibrasChart, {

@@ -131,6 +131,10 @@ function Texturas() {
   var fibrasSegs = _fs[0], setFibrasSegs = _fs[1];
   var _fc = useState("stack");
   var fibrasCompare = _fc[0], setFibrasCompare = _fc[1];
+
+  // ── Custom segments per doc ──
+  var _csb = useState({});
+  var customSegsByDoc = _csb[0], setCustomSegsByDoc = _csb[1];
   var _cm = useState("comunidad");
   var colorMode = _cm[0], setColorMode = _cm[1];
 
@@ -187,6 +191,7 @@ function Texturas() {
     setTimeout(function() {
       var newS1 = {};
       var newResults = {};
+      var newCsb = {};
       for (var i = 0; i < docs.length; i++) {
         var d = docs[i];
         if (!d.text || d.text.trim().length === 0) continue;
@@ -194,9 +199,17 @@ function Texturas() {
         newS1[d.id] = s1;
         var s2 = analyzeStage2(s1, eng, topN, wnDepth, decay, flow);
         newResults[d.id] = s2;
+
+        // Detect custom segments
+        var segProto = detectSegProtocol(d.text);
+        if (segProto) {
+          var boundaries = buildCustomSegBoundaries(d.text, segProto, s2.enriched);
+          newCsb[d.id] = boundaries;
+        }
       }
       setStage1Cache(newS1);
       setPerDocResults(newResults);
+      setCustomSegsByDoc(newCsb);
       setLoading(false);
       setMsg("An\u00E1lisis completo.");
       setTab("fibras");
@@ -304,13 +317,16 @@ function Texturas() {
       var id = selectedViewDocs[i];
       var res = perDocResults[id];
       if (!res) continue;
+      var csb = customSegsByDoc[id] || null;
       map[id] = computeFibras(
         res.enriched, res.freqMap, res.relevanceMap, eng,
-        seeds, fibrasSegs, fibrasMode, topN, decay, sortBy === "relevance" ? "relevance" : "freq"
+        seeds, fibrasSegs, fibrasMode, topN, decay,
+        sortBy === "relevance" ? "relevance" : "freq",
+        csb
       );
     }
     return map;
-  }, [selectedViewDocs, perDocResults, seeds, fibrasSegs, fibrasMode, topN, decay, sortBy]);
+  }, [selectedViewDocs, perDocResults, seeds, fibrasSegs, fibrasMode, topN, decay, sortBy, customSegsByDoc]);
 
   // ── Word list for panel (from fibras data) ──
   var fibrasWords = useMemo(function() {
@@ -711,11 +727,20 @@ function Texturas() {
           })
         ),
 
-        // Segments
-        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 4 } },
-          React.createElement("span", { style: { fontSize: 9, color: T.textDim } }, "Seg:"),
-          React.createElement(NumInput, { value: fibrasSegs, onChange: setFibrasSegs, min: 3, max: 50, width: 45 })
-        ),
+        // Segments (disabled when custom segments present)
+        (function() {
+          var activeDocId = selectedViewDocs[0];
+          var hasCustom = customSegsByDoc[activeDocId] && customSegsByDoc[activeDocId].length > 0;
+          var customCount = hasCustom ? customSegsByDoc[activeDocId].length : 0;
+          return React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 4 } },
+            React.createElement("span", { style: { fontSize: 9, color: T.textDim } }, "Seg:"),
+            hasCustom
+              ? React.createElement("span", {
+                  style: { fontSize: 9, color: T.accent, fontFamily: T.fontMono }
+                }, customCount + " (custom)")
+              : React.createElement(NumInput, { value: fibrasSegs, onChange: setFibrasSegs, min: 3, max: 50, width: 45 })
+          );
+        })(),
 
         // Decay
         React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 4 } },
