@@ -600,9 +600,9 @@ function FibrasDocStack(props) {
       style: { fontSize: T.fs10, color: T.textMid, fontFamily: T.fontMono }
     }, props.docLabel),
 
-    // Minimap (top, always visible)
+    // Minimap (top, always visible, extended to chart boundaries)
     React.createElement("div", {
-      style: { marginLeft: layout ? layout.padLeft : 80 }
+      style: { marginLeft: (layout ? layout.padLeft : 80) - 66, marginRight: -14 }
     },
       React.createElement(FibrasMinimap, {
         numSegs: fibras.numSegs,
@@ -610,7 +610,7 @@ function FibrasDocStack(props) {
         winSize: winSize,
         setWinStart: setWinStart,
         fibras: fibras,
-        chartWidth: chartAreaW,
+        chartWidth: chartAreaW + 66 + 14,
         segPolarity: layout ? layout.segPolarity : [],
         segArousal: layout ? layout.segArousal : []
       })
@@ -622,9 +622,9 @@ function FibrasDocStack(props) {
       enabledEmos: enabledEmos
     }),
 
-    // Segment labels (React elements for tooltip support)
+    // Segment labels (single source, React elements for tooltip support)
     segLabels.length > 0 && React.createElement("div", {
-      style: { position: "relative", height: 16, width: canvasW }
+      style: { position: "relative", height: 14, width: canvasW, marginBottom: 2 }
     },
       segLabels.map(function(sl, sli) {
         var displayLabel = sl.label ? "S" + (sl.segIdx + 1) : String(sl.segIdx + 1);
