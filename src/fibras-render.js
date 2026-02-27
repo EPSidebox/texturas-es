@@ -154,7 +154,7 @@ function FibrasChart(props) {
             var nAlpha = node.opacity * dimAlpha;
             p.fill(rgb[0], rgb[1], rgb[2], nAlpha * 255);
             p.noStroke();
-            p.rect(node.x, node.y, node.w, node.h, 2);
+            p.rect(node.x, node.y, node.w, node.h);
           }
 
           // ── Draw labels ──
@@ -171,6 +171,64 @@ function FibrasChart(props) {
                 var labelY = lNode.y + lNode.h / 2;
                 p.text(slot.word, labelX, labelY);
               }
+            }
+          }
+        }
+
+        // ── Cross-stream links ──
+        if (lay.crossLinks && lay.crossLinks.length > 0) {
+          for (var cli = 0; cli < lay.crossLinks.length; cli++) {
+            var cl = lay.crossLinks[cli];
+            var srcSlot = lay.wordSlots[cl.srcSlotIdx];
+            var tgtSlot = lay.wordSlots[cl.tgtSlotIdx];
+
+            var clActive = !hasHighlight ||
+              cl.srcWord === hWord || cl.tgtWord === hWord ||
+              (locked && (locked.has(cl.srcWord) || locked.has(cl.tgtWord))) ||
+              (propsRef.current.seeds && (propsRef.current.seeds.has(cl.srcWord) || propsRef.current.seeds.has(cl.tgtWord)));
+            var clDim = clActive ? 1.0 : 0.08;
+
+            var clSrc = cl.srcNode;
+            var clTgt = cl.tgtNode;
+            var clSrcRgb = _hexToRgb(cl.srcColor);
+            var clTgtRgb = _hexToRgb(cl.tgtColor);
+
+            var clSrcTop = clSrc.y;
+            var clSrcBot = clSrc.y + clSrc.h;
+            var clSrcRight = clSrc.x + clSrc.w;
+            var clTgtTop = clTgt.y;
+            var clTgtBot = clTgt.y + clTgt.h;
+            var clTgtLeft = clTgt.x;
+
+            var clCpOff = (clTgtLeft - clSrcRight) / 3;
+            var clSrcAlpha = clSrc.opacity * clDim * 0.5 * cl.similarity;
+            var clTgtAlpha = clTgt.opacity * clDim * 0.5 * cl.similarity;
+            var clSteps = 10;
+
+            p.noStroke();
+            for (var csi = 0; csi < clSteps; csi++) {
+              var ct0 = csi / clSteps;
+              var ct1 = (csi + 1) / clSteps;
+              var caMid = (clSrcAlpha + (clTgtAlpha - clSrcAlpha) * ((ct0 + ct1) / 2));
+              var cRgbMid = _lerpColor(clSrcRgb, clTgtRgb, (ct0 + ct1) / 2);
+
+              var ctTopX0 = p.bezierPoint(clSrcRight, clSrcRight + clCpOff, clTgtLeft - clCpOff, clTgtLeft, ct0);
+              var ctTopY0 = p.bezierPoint(clSrcTop, clSrcTop, clTgtTop, clTgtTop, ct0);
+              var ctTopX1 = p.bezierPoint(clSrcRight, clSrcRight + clCpOff, clTgtLeft - clCpOff, clTgtLeft, ct1);
+              var ctTopY1 = p.bezierPoint(clSrcTop, clSrcTop, clTgtTop, clTgtTop, ct1);
+
+              var ctBotX0 = p.bezierPoint(clSrcRight, clSrcRight + clCpOff, clTgtLeft - clCpOff, clTgtLeft, ct0);
+              var ctBotY0 = p.bezierPoint(clSrcBot, clSrcBot, clTgtBot, clTgtBot, ct0);
+              var ctBotX1 = p.bezierPoint(clSrcRight, clSrcRight + clCpOff, clTgtLeft - clCpOff, clTgtLeft, ct1);
+              var ctBotY1 = p.bezierPoint(clSrcBot, clSrcBot, clTgtBot, clTgtBot, ct1);
+
+              p.fill(cRgbMid[0], cRgbMid[1], cRgbMid[2], caMid * 255);
+              p.beginShape();
+              p.vertex(ctTopX0, ctTopY0);
+              p.vertex(ctTopX1, ctTopY1);
+              p.vertex(ctBotX1, ctBotY1);
+              p.vertex(ctBotX0, ctBotY0);
+              p.endShape(p.CLOSE);
             }
           }
         }
@@ -465,7 +523,7 @@ function FibrasMinimap(props) {
 // ── FibrasDocStack ──
 // Single document wrapper. Manages winStart state + minimap + chart.
 // Props: {fibras, seeds, enabledEmos, docLabel, sortMode, colorMode,
-//         lockedWords, toggleLocked, commMap, canvasW, canvasH}
+//         lockedWords, toggleLocked, commMap, canvasW, canvasH, eng}
 function FibrasDocStack(props) {
   var fibras = props.fibras;
   var seeds = props.seeds;
@@ -477,6 +535,7 @@ function FibrasDocStack(props) {
   var commMap = props.commMap;
   var canvasW = props.canvasW || 800;
   var canvasH = props.canvasH || 500;
+  var engProp = props.eng;
 
   var winSize = 10;
 
@@ -490,9 +549,9 @@ function FibrasDocStack(props) {
     if (!fibras) return null;
     return buildWindowedLayout(
       fibras, winStart, winSize, seeds, sortMode, colorMode,
-      canvasW, canvasH, commMap
+      canvasW, canvasH, commMap, engProp
     );
-  }, [fibras, winStart, winSize, seeds, sortMode, colorMode, canvasW, canvasH, commMap]);
+  }, [fibras, winStart, winSize, seeds, sortMode, colorMode, canvasW, canvasH, commMap, engProp]);
 
   if (!fibras) return null;
 
@@ -530,7 +589,7 @@ function FibrasDocStack(props) {
 // Multi-document manager. Routes to single or stacked views.
 // Props: {selectedArr, fibrasDataMap, seedArr, enabledEmos, docs,
 //         compareMode, sortMode, colorMode, lockedWords, toggleLocked,
-//         commMapByDoc, canvasW, canvasH}
+//         commMapByDoc, canvasW, canvasH, eng}
 function FibrasMultiDoc(props) {
   var selectedArr = props.selectedArr || [];
   var fibrasDataMap = props.fibrasDataMap || {};
@@ -545,6 +604,7 @@ function FibrasMultiDoc(props) {
   var commMapByDoc = props.commMapByDoc || {};
   var canvasW = props.canvasW || 800;
   var canvasH = props.canvasH || 500;
+  var engProp = props.eng;
 
   if (selectedArr.length === 0) {
     return React.createElement("div", {
@@ -570,7 +630,8 @@ function FibrasMultiDoc(props) {
       toggleLocked: toggleLocked,
       commMap: commMapByDoc[docId],
       canvasW: canvasW,
-      canvasH: canvasH
+      canvasH: canvasH,
+      eng: engProp
     });
   }
 
@@ -596,7 +657,8 @@ function FibrasMultiDoc(props) {
         toggleLocked: toggleLocked,
         commMap: commMapByDoc[docId],
         canvasW: canvasW,
-        canvasH: stackH
+        canvasH: stackH,
+        eng: engProp
       });
     })
   );

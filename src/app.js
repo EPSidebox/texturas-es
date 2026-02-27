@@ -785,7 +785,8 @@ function Texturas() {
           toggleLocked: toggleLocked,
           commMapByDoc: commMapByDoc,
           canvasW: T.maxWidth - T.wordPanelW - T.gap12 * 2,
-          canvasH: T.contentH
+          canvasH: T.contentH,
+          eng: eng
         })
       )
     ),

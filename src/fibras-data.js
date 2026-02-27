@@ -8,6 +8,106 @@
 //          computeFibras, buildWindowedLayout
 // ─────────────────────────────────────────────
 
+// ── clusterByVec ──
+// K-means clustering on word2vec vectors.
+// Returns {word: clusterIndex} for all words that have vectors.
+// Words without vectors get cluster 0.
+function clusterByVec(words, eng, k) {
+  if (!eng || !eng.vec || !eng.vec.isLoaded() || words.length === 0) {
+    var fallback = {};
+    for (var fi = 0; fi < words.length; fi++) fallback[words[fi]] = 0;
+    return fallback;
+  }
+
+  var dim = eng.vec.dim;
+  var numK = Math.min(k || 6, words.length);
+
+  // Collect words that have vectors
+  var vecWords = [];
+  var vecs = [];
+  for (var i = 0; i < words.length; i++) {
+    var v = eng.vec.getVec(words[i]);
+    if (v) {
+      vecWords.push(words[i]);
+      // Copy to plain array (subarray refs can shift)
+      var arr = new Float32Array(dim);
+      for (var d = 0; d < dim; d++) arr[d] = v[d];
+      vecs.push(arr);
+    }
+  }
+
+  if (vecWords.length < numK) {
+    // Not enough vectors for k clusters, assign sequentially
+    var seq = {};
+    for (var si = 0; si < words.length; si++) seq[words[si]] = si % Math.max(1, numK);
+    return seq;
+  }
+
+  // Initialize centroids from evenly spaced words
+  var centroids = [];
+  for (var ci = 0; ci < numK; ci++) {
+    var idx = Math.floor(ci * vecWords.length / numK);
+    var cent = new Float32Array(dim);
+    for (var d2 = 0; d2 < dim; d2++) cent[d2] = vecs[idx][d2];
+    centroids.push(cent);
+  }
+
+  // K-means iterations
+  var assignments = new Array(vecWords.length);
+  var maxIter = 20;
+  for (var iter = 0; iter < maxIter; iter++) {
+    var changed = false;
+
+    // Assign each word to nearest centroid (cosine similarity)
+    for (var wi = 0; wi < vecWords.length; wi++) {
+      var bestC = 0;
+      var bestSim = -2;
+      for (var cj = 0; cj < numK; cj++) {
+        var dot = 0, na = 0, nb = 0;
+        for (var d3 = 0; d3 < dim; d3++) {
+          dot += vecs[wi][d3] * centroids[cj][d3];
+          na += vecs[wi][d3] * vecs[wi][d3];
+          nb += centroids[cj][d3] * centroids[cj][d3];
+        }
+        var denom = Math.sqrt(na) * Math.sqrt(nb);
+        var sim = denom > 0 ? dot / denom : 0;
+        if (sim > bestSim) { bestSim = sim; bestC = cj; }
+      }
+      if (assignments[wi] !== bestC) { assignments[wi] = bestC; changed = true; }
+    }
+
+    if (!changed) break;
+
+    // Recompute centroids
+    for (var ck = 0; ck < numK; ck++) {
+      var sum = new Float32Array(dim);
+      var count = 0;
+      for (var wj = 0; wj < vecWords.length; wj++) {
+        if (assignments[wj] === ck) {
+          for (var d4 = 0; d4 < dim; d4++) sum[d4] += vecs[wj][d4];
+          count++;
+        }
+      }
+      if (count > 0) {
+        for (var d5 = 0; d5 < dim; d5++) centroids[ck][d5] = sum[d5] / count;
+      }
+    }
+  }
+
+  // Build result map
+  var result = {};
+  var vecIdx = 0;
+  for (var ri = 0; ri < words.length; ri++) {
+    if (vecIdx < vecWords.length && words[ri] === vecWords[vecIdx]) {
+      result[words[ri]] = assignments[vecIdx];
+      vecIdx++;
+    } else {
+      result[words[ri]] = 0;
+    }
+  }
+  return result;
+}
+
 // ── segmentText ──
 // Splits content tokens (non-stop) into N equal segments.
 // Returns [{idx, tokens, freqMap}]
@@ -198,6 +298,9 @@ function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mod
     }
   }
 
+  // Compute word2vec clusters for color mode
+  var vecClusterMap = clusterByVec(nodeWords, eng, Math.min(8, Math.max(3, Math.floor(nodeWords.length / 4))));
+
   return {
     nodeWords: nodeWords,
     segments: segments,
@@ -210,7 +313,8 @@ function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mod
     maxRel: maxRel || 1,
     maxSegFreq: maxSegFreq || 1,
     maxSegRel: maxSegRel || 1,
-    decay: decay
+    decay: decay,
+    vecClusterMap: vecClusterMap
   };
 }
 
@@ -229,7 +333,7 @@ function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mod
 //   canvasW, canvasH,
 //   maxFreq, maxRel
 // }
-function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMode, canvasW, canvasH, commMap) {
+function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMode, canvasW, canvasH, commMap, eng) {
   var nodeWords = fibras.nodeWords;
   var segments = fibras.segments;
   var segData = fibras.segData;
@@ -290,16 +394,12 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
   var totalGap = (numWords - 1) * gapY;
   var availH = Math.max(10, chartH - totalGap);
   var baseNodeH = numWords > 0 ? availH / numWords : 10;
-  var minNodeH = 3;
+  var minNodeH = 1;
   var maxNodeH = Math.max(minNodeH + 1, baseNodeH * 2);
 
   // Color assignment per word
   function getWordColor(w, rank) {
     if (colorMode === "valencia") {
-      // Average polarity from enriched tokens — approximate from freqMap/relevanceMap
-      // We don't have per-word polarity in fibras data, so we pass it via commMap overload
-      // For now, use a simple approach: positive=green, negative=red, neutral=gray
-      // Actual polarity will be passed in commMap as {word: polarity} when colorMode=valencia
       var pol = commMap && commMap[w] !== undefined ? commMap[w] : 0;
       if (pol > 0.05) return T.positive;
       if (pol < -0.05) return T.negative;
@@ -308,9 +408,9 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
     if (colorMode === "rango") {
       return CC[rank % CC.length];
     }
-    // Default: comunidad
-    var comm = commMap && commMap[w] !== undefined ? commMap[w] : 0;
-    return CC[comm % CC.length];
+    // Default: comunidad — use word2vec clusters
+    var cluster = fibras.vecClusterMap ? (fibras.vecClusterMap[w] || 0) : 0;
+    return CC[cluster % CC.length];
   }
 
   // Build per-word slot data
@@ -429,6 +529,47 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
     });
   }
 
+  // ── Cross-stream links (word2vec similarity) ──
+  // When word A is real in column C but absent in C+1, and word B is real in C+1
+  // with similarity > 0.5, create a cross-stream ribbon.
+  var crossLinks = [];
+  var SIM_THRESHOLD = 0.5;
+  if (eng && eng.vec && eng.vec.isLoaded()) {
+    for (var xwi = 0; xwi < wordSlots.length; xwi++) {
+      var slotA = wordSlots[xwi];
+      for (var xc = 0; xc < numCols - 1; xc++) {
+        var nodeA = slotA.nodes[xc];
+        var nodeANext = slotA.nodes[xc + 1];
+        // A is real in this column but not in the next
+        if (!nodeA.isReal || nodeANext.isReal) continue;
+
+        for (var xwj = 0; xwj < wordSlots.length; xwj++) {
+          if (xwi === xwj) continue;
+          var slotB = wordSlots[xwj];
+          var nodeB = slotB.nodes[xc + 1];
+          if (!nodeB.isReal) continue;
+
+          var sim = eng.vec.similarity(slotA.word, slotB.word);
+          if (sim >= SIM_THRESHOLD) {
+            crossLinks.push({
+              srcSlotIdx: xwi,
+              tgtSlotIdx: xwj,
+              srcNode: nodeA,
+              tgtNode: nodeB,
+              srcWord: slotA.word,
+              tgtWord: slotB.word,
+              srcColor: slotA.color,
+              tgtColor: slotB.color,
+              similarity: sim,
+              srcCol: xc,
+              tgtCol: xc + 1
+            });
+          }
+        }
+      }
+    }
+  }
+
   // Build emotion bar data
   var emoBars = [];
   for (var c4 = 0; c4 < numCols; c4++) {
@@ -447,6 +588,7 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
   return {
     columns: columns,
     wordSlots: wordSlots,
+    crossLinks: crossLinks,
     emoBars: emoBars,
     canvasW: canvasW,
     canvasH: canvasH,
