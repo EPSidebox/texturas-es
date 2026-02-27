@@ -134,6 +134,10 @@ function Texturas() {
   var _cm = useState("comunidad");
   var colorMode = _cm[0], setColorMode = _cm[1];
 
+  // ── Tejido filter ──
+  var _tf = useState(true);
+  var tejidoFilter = _tf[0], setTejidoFilter = _tf[1];
+
   // ── Load NLP engines on mount ──
   useEffect(function() {
     if (engSt !== "idle") return;
@@ -360,6 +364,38 @@ function Texturas() {
     });
   }, [perDocResults, selectedViewDocs]);
 
+  // ── Filtered weaveEnriched for Tejido (dims words not in active mode) ──
+  var tejidoFilteredSet = useMemo(function() {
+    if (!tejidoFilter) return null; // null = show all
+    var id = selectedViewDocs[0];
+    var fd = fibrasDataMap[id];
+    if (!fd) return null;
+    var set = {};
+    for (var i = 0; i < fd.nodeWords.length; i++) {
+      set[fd.nodeWords[i]] = true;
+    }
+    return set;
+  }, [tejidoFilter, fibrasDataMap, selectedViewDocs]);
+
+  function filterWeaveEnriched(weaveEnriched, filterSet) {
+    if (!filterSet) return weaveEnriched;
+    return weaveEnriched.map(function(para) {
+      return para.map(function(tok) {
+        if (tok.stop || tok.type === "s" || tok.type === "x") return tok;
+        if (!filterSet[tok.lemma]) {
+          // Clone and mark as stop so WeaveReader dims it
+          return {
+            surface: tok.surface, lemma: tok.lemma, pos: tok.pos,
+            stop: true, type: tok.type, rel: tok.rel, freq: tok.freq,
+            polarity: tok.polarity, arousal: tok.arousal,
+            emolex: tok.emolex, comm: tok.comm
+          };
+        }
+        return tok;
+      });
+    });
+  }
+
   // ── Active doc for text area ──
   var activeDoc = null;
   for (var adi = 0; adi < docs.length; adi++) {
@@ -408,10 +444,10 @@ function Texturas() {
     React.createElement("div", {
       style: { display: "flex", gap: T.gap6, marginBottom: T.gap16 }
     },
-      React.createElement("button", { onClick: function() { setTab("input"); }, style: tabBtnStyle("input") }, "Entrada"),
+      React.createElement("button", { onClick: function() { setTab("input"); }, style: tabBtnStyle("input") }, "Importar"),
       React.createElement("button", { onClick: function() { setTab("fibras"); }, style: tabBtnStyle("fibras") }, "Fibras"),
       React.createElement("button", { onClick: function() { setTab("weave"); }, style: tabBtnStyle("weave") }, "Tejido"),
-      React.createElement("button", { onClick: function() { setTab("output"); }, style: tabBtnStyle("output") }, "Salida"),
+      React.createElement("button", { onClick: function() { setTab("output"); }, style: tabBtnStyle("output") }, "Exportar"),
       React.createElement("button", { onClick: function() { setTab("about"); }, style: tabBtnStyle("about") }, "Acerca")
     ),
 
@@ -657,7 +693,7 @@ function Texturas() {
           React.createElement("span", { style: { fontSize: 9, color: T.textDim } }, "Color:"),
           ["comunidad", "valencia", "rango"].map(function(cm) {
             var active = colorMode === cm;
-            var label = cm === "comunidad" ? "Com" : cm === "valencia" ? "Val" : "Rng";
+            var label = cm === "comunidad" ? "Com" : cm === "valencia" ? "Pol" : "Rng";
             return React.createElement("button", {
               key: cm,
               onClick: function() { setColorMode(cm); },
@@ -795,6 +831,51 @@ function Texturas() {
     // TAB: TEJIDO
     // ════════════════════════════════════════
     tab === "weave" && React.createElement("div", null,
+      // Mode selector + filter toggle
+      React.createElement("div", {
+        style: { display: "flex", gap: T.gap8, marginBottom: T.gap8, alignItems: "center", flexWrap: "wrap" }
+      },
+        // Shared mode selector
+        React.createElement("div", { style: { display: "flex", gap: T.gap4 } },
+          [
+            { key: "semillas", label: "Semillas" },
+            { key: "recurrentes", label: "Recurrentes" },
+            { key: "persistentes", label: "Persistentes" }
+          ].map(function(m) {
+            var active = fibrasMode === m.key;
+            return React.createElement("button", {
+              key: m.key,
+              onClick: function() { setFibrasMode(m.key); },
+              style: {
+                background: active ? T.accent + "22" : "transparent",
+                border: "1px solid " + (active ? T.accent : T.border),
+                color: active ? T.accent : T.textDim,
+                borderRadius: T.radius3,
+                padding: "3px 8px",
+                fontSize: T.fs10,
+                fontFamily: T.fontMono,
+                cursor: "pointer"
+              }
+            }, m.label);
+          })
+        ),
+
+        // Filter toggle
+        React.createElement("button", {
+          onClick: function() { setTejidoFilter(!tejidoFilter); },
+          style: {
+            background: tejidoFilter ? T.accent + "22" : "transparent",
+            border: "1px solid " + (tejidoFilter ? T.accent : T.borderLight),
+            color: tejidoFilter ? T.accent : T.textDim,
+            borderRadius: T.radius3,
+            padding: "3px 8px",
+            fontSize: T.fs10,
+            fontFamily: T.fontMono,
+            cursor: "pointer"
+          }
+        }, tejidoFilter ? "Filtro activo" : "Mostrar todo")
+      ),
+
       // Layer toggles
       React.createElement("div", {
         style: { display: "flex", gap: T.gap8, marginBottom: T.gap12, flexWrap: "wrap", alignItems: "center" }
@@ -902,9 +983,12 @@ function Texturas() {
           selectedViewDocs.map(function(docId) {
             var res = perDocResults[docId];
             if (!res) return null;
+            var weData = tejidoFilteredSet
+              ? filterWeaveEnriched(res.weaveEnriched, tejidoFilteredSet)
+              : res.weaveEnriched;
             return React.createElement(WeaveReader, {
               key: docId,
-              weaveEnriched: res.weaveEnriched,
+              weaveEnriched: weData,
               layers: layers,
               freqMap: res.freqMap,
               maxFreq: res.maxFreq,

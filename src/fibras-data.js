@@ -570,7 +570,7 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
     }
   }
 
-  // Build emotion bar data
+  // Build emotion bar data + per-segment polarity and arousal for minimap
   var emoBars = [];
   for (var c4 = 0; c4 < numCols; c4++) {
     var segIdx2 = winStart + c4;
@@ -585,11 +585,34 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
     });
   }
 
+  // Per-segment polarity and arousal (for minimap, computed over ALL segments)
+  var segPolarity = [];
+  var segArousal = [];
+  for (var sp = 0; sp < segments.length; sp++) {
+    var sToks = segments[sp].tokens;
+    var polSum = 0, polCount = 0;
+    var aroSum = 0, aroCount = 0;
+    for (var st = 0; st < sToks.length; st++) {
+      if (sToks[st].polarity !== null && sToks[st].polarity !== undefined) {
+        polSum += sToks[st].polarity;
+        polCount++;
+      }
+      if (sToks[st].arousal !== null && sToks[st].arousal !== undefined) {
+        aroSum += sToks[st].arousal;
+        aroCount++;
+      }
+    }
+    segPolarity.push(polCount > 0 ? polSum / polCount : 0);
+    segArousal.push(aroCount > 0 ? aroSum / aroCount : 0);
+  }
+
   return {
     columns: columns,
     wordSlots: wordSlots,
     crossLinks: crossLinks,
     emoBars: emoBars,
+    segPolarity: segPolarity,
+    segArousal: segArousal,
     canvasW: canvasW,
     canvasH: canvasH,
     chartH: chartH,
