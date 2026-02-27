@@ -83,8 +83,9 @@ function selectWords(freqMap, relevanceMap, seeds, mode, topN, sortMode) {
 // ── computeSegData ──
 // Per-segment activation for each word.
 // Uses raw frequency + word2vec similarity boost from eng.vec.
-// Returns [{word: activation, ...}, ...] (one object per segment)
-function computeSegData(segments, nodeWords, eng, decay) {
+// Also computes hybrid relevance per segment: globalRel × localActivation.
+// Returns [{word: {freq: n, rel: n, act: n}, ...}, ...] (one object per segment)
+function computeSegData(segments, nodeWords, eng, decay, relevanceMap) {
   var result = [];
   for (var s = 0; s < segments.length; s++) {
     var seg = segments[s];
@@ -105,7 +106,14 @@ function computeSegData(segments, nodeWords, eng, decay) {
         }
       }
 
-      row[w] = baseFreq + boost;
+      var localAct = baseFreq + boost;
+      var globalRel = (relevanceMap && relevanceMap[w]) ? relevanceMap[w] : 1;
+
+      row[w] = {
+        freq: localAct,
+        rel: globalRel * (localAct > 0 ? localAct : 0),
+        act: localAct
+      };
     }
     result.push(row);
   }
@@ -166,15 +174,28 @@ function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mod
     nodeWords = selectWords(freqMap, relevanceMap, seeds, mode, topN, sortMode);
   }
 
-  var segData = computeSegData(segments, nodeWords, eng, decay);
+  var segData = computeSegData(segments, nodeWords, eng, decay, relevanceMap);
   var segEmo = computeSegEmo(segments);
 
+  // Compute global maxes for normalization
   var maxFreq = 0;
   var maxRel = 0;
+  var maxSegFreq = 0;
+  var maxSegRel = 0;
   for (var i = 0; i < nodeWords.length; i++) {
     var ww = nodeWords[i];
     if (freqMap[ww] > maxFreq) maxFreq = freqMap[ww];
     if ((relevanceMap[ww] || 1) > maxRel) maxRel = relevanceMap[ww] || 1;
+  }
+  // Per-segment maxes (for node height normalization)
+  for (var si2 = 0; si2 < segData.length; si2++) {
+    for (var wi2 = 0; wi2 < nodeWords.length; wi2++) {
+      var entry = segData[si2][nodeWords[wi2]];
+      if (entry) {
+        if (entry.freq > maxSegFreq) maxSegFreq = entry.freq;
+        if (entry.rel > maxSegRel) maxSegRel = entry.rel;
+      }
+    }
   }
 
   return {
@@ -187,6 +208,8 @@ function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mod
     relevanceMap: relevanceMap,
     maxFreq: maxFreq || 1,
     maxRel: maxRel || 1,
+    maxSegFreq: maxSegFreq || 1,
+    maxSegRel: maxSegRel || 1,
     decay: decay
   };
 }
@@ -196,17 +219,17 @@ function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mod
 // Pure data — no rendering. Produces rectangles and curve control points.
 //
 // Returns {
-//   columns: [{x, segIdx}],             — column x-positions
-//   wordSlots: [{                        — one per word
-//     word, rank, freq, rel, isSeed,
-//     nodes: [{col, segIdx, x, y, w, h, isReal, activation, primary, secondary}],
-//     links: [{srcCol, tgtCol, srcNode, tgtNode, isReal}]
+//   columns: [{x, segIdx}],
+//   wordSlots: [{
+//     word, rank, freq, rel, isSeed, color,
+//     nodes: [{col, segIdx, x, y, w, h, isReal, opacity, primary, secondary}],
+//     links: [{srcCol, tgtCol, srcNode, tgtNode}]
 //   }],
 //   emoBars: [{segIdx, x, joy, fear, sadness, anger}],
 //   canvasW, canvasH,
 //   maxFreq, maxRel
 // }
-function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, canvasW, canvasH) {
+function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMode, canvasW, canvasH, commMap) {
   var nodeWords = fibras.nodeWords;
   var segments = fibras.segments;
   var segData = fibras.segData;
@@ -257,7 +280,11 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, canvasW
   if (maxFreq === 0) maxFreq = 1;
   if (maxRel === 0) maxRel = 1;
 
-  // Compute node height based on primary metric
+  // Normalization maxes for per-segment values
+  var maxSegFreq = fibras.maxSegFreq;
+  var maxSegRel = fibras.maxSegRel;
+
+  // Compute node height based on primary metric (per segment)
   // Total available height divided among all words + gaps
   var numWords = nodeWords.length;
   var totalGap = (numWords - 1) * gapY;
@@ -265,6 +292,26 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, canvasW
   var baseNodeH = numWords > 0 ? availH / numWords : 10;
   var minNodeH = 3;
   var maxNodeH = Math.max(minNodeH + 1, baseNodeH * 2);
+
+  // Color assignment per word
+  function getWordColor(w, rank) {
+    if (colorMode === "valencia") {
+      // Average polarity from enriched tokens — approximate from freqMap/relevanceMap
+      // We don't have per-word polarity in fibras data, so we pass it via commMap overload
+      // For now, use a simple approach: positive=green, negative=red, neutral=gray
+      // Actual polarity will be passed in commMap as {word: polarity} when colorMode=valencia
+      var pol = commMap && commMap[w] !== undefined ? commMap[w] : 0;
+      if (pol > 0.05) return T.positive;
+      if (pol < -0.05) return T.negative;
+      return T.neutral;
+    }
+    if (colorMode === "rango") {
+      return CC[rank % CC.length];
+    }
+    // Default: comunidad
+    var comm = commMap && commMap[w] !== undefined ? commMap[w] : 0;
+    return CC[comm % CC.length];
+  }
 
   // Build per-word slot data
   var wordSlots = [];
@@ -274,24 +321,9 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, canvasW
     var rel = relevanceMap[w] || 1;
     var rank = wi;
     var isSeed = seeds && seeds.has ? seeds.has(w) : false;
+    var color = getWordColor(w, rank);
 
-    var primary, secondary, primaryNorm, secondaryNorm;
-    if (sortMode === "relevance") {
-      primary = rel;
-      secondary = freq;
-      primaryNorm = rel / maxRel;
-      secondaryNorm = freq / maxFreq;
-    } else {
-      primary = freq;
-      secondary = rel;
-      primaryNorm = freq / maxFreq;
-      secondaryNorm = rel / maxRel;
-    }
-
-    // Node height from primary metric
-    var nodeH = minNodeH + primaryNorm * (maxNodeH - minNodeH);
-
-    // Y position from rank
+    // Y position from rank (center of the slot)
     var y = padTop + rank * (baseNodeH + gapY);
 
     // Build nodes per visible column
@@ -301,8 +333,29 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, canvasW
 
     for (var c2 = 0; c2 < numCols; c2++) {
       var segIdx = winStart + c2;
-      var act = segData[segIdx] ? (segData[segIdx][w] || 0) : 0;
-      var isReal = act > 0;
+      var segEntry = segData[segIdx] ? segData[segIdx][w] : null;
+      var localFreq = segEntry ? segEntry.freq : 0;
+      var localRel = segEntry ? segEntry.rel : 0;
+      var isReal = segEntry ? segEntry.act > 0 : false;
+
+      // Primary metric controls height (per segment)
+      // Secondary metric controls opacity (per segment)
+      var primaryVal, secondaryVal, primaryNorm, secondaryNorm;
+      if (sortMode === "relevance") {
+        primaryVal = localRel;
+        secondaryVal = localFreq;
+        primaryNorm = maxSegRel > 0 ? localRel / maxSegRel : 0;
+        secondaryNorm = maxSegFreq > 0 ? localFreq / maxSegFreq : 0;
+      } else {
+        primaryVal = localFreq;
+        secondaryVal = localRel;
+        primaryNorm = maxSegFreq > 0 ? localFreq / maxSegFreq : 0;
+        secondaryNorm = maxSegRel > 0 ? localRel / maxSegRel : 0;
+      }
+
+      var nodeH = isReal ? minNodeH + primaryNorm * (maxNodeH - minNodeH) : 0;
+      // Opacity: base 0.25 + secondary metric scales up to 1.0
+      var opacity = isReal ? 0.25 + secondaryNorm * 0.75 : 0;
 
       if (isReal) {
         if (firstRealCol === -1) firstRealCol = c2;
@@ -313,33 +366,49 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, canvasW
         col: c2,
         segIdx: segIdx,
         x: columns[c2].x - nodeW / 2,
-        y: y,
+        y: y + (baseNodeH - nodeH) / 2,  // center node vertically in slot
         w: nodeW,
         h: nodeH,
         isReal: isReal,
-        activation: act,
-        primary: primary,
-        secondary: secondary,
+        opacity: opacity,
+        primary: primaryVal,
+        secondary: secondaryVal,
         primaryNorm: primaryNorm,
         secondaryNorm: secondaryNorm
       });
     }
 
     // Build links: only between firstReal and lastReal columns
+    // Links connect adjacent columns; ghost segments produce no visible link
     var slotLinks = [];
     if (firstRealCol >= 0 && lastRealCol > firstRealCol) {
       for (var c3 = firstRealCol; c3 < lastRealCol; c3++) {
         var srcNode = slotNodes[c3];
         var tgtNode = slotNodes[c3 + 1];
-        // Link is real only if BOTH endpoints are real
-        var linkIsReal = srcNode.isReal && tgtNode.isReal;
-        slotLinks.push({
-          srcCol: c3,
-          tgtCol: c3 + 1,
-          srcNode: srcNode,
-          tgtNode: tgtNode,
-          isReal: linkIsReal
-        });
+        // Only create links where both endpoints are real
+        if (srcNode.isReal && tgtNode.isReal) {
+          slotLinks.push({
+            srcCol: c3,
+            tgtCol: c3 + 1,
+            srcNode: srcNode,
+            tgtNode: tgtNode
+          });
+        }
+      }
+    }
+
+    // Determine label positions: first real node + first real after each ghost gap
+    var labelCols = [];
+    if (firstRealCol >= 0) {
+      labelCols.push(firstRealCol);
+      var wasGhost = false;
+      for (var c5 = firstRealCol + 1; c5 <= lastRealCol; c5++) {
+        if (!slotNodes[c5].isReal) {
+          wasGhost = true;
+        } else if (wasGhost) {
+          labelCols.push(c5);
+          wasGhost = false;
+        }
       }
     }
 
@@ -349,16 +418,14 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, canvasW
       freq: freq,
       rel: rel,
       isSeed: isSeed,
-      primary: primary,
-      secondary: secondary,
-      primaryNorm: primaryNorm,
-      secondaryNorm: secondaryNorm,
-      nodeH: nodeH,
+      color: color,
       y: y,
+      slotH: baseNodeH,
       nodes: slotNodes,
       links: slotLinks,
       firstRealCol: firstRealCol,
-      lastRealCol: lastRealCol
+      lastRealCol: lastRealCol,
+      labelCols: labelCols
     });
   }
 
