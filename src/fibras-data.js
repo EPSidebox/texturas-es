@@ -358,11 +358,17 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
   var nodeW = Math.max(4, Math.min(colW * 0.4, 30));
   var gapY = 2; // vertical gap between nodes in a column
 
-  // Build column x-positions
+  // Build column x-positions (edge-to-edge across chart area)
   var columns = [];
   for (var c = 0; c < numCols; c++) {
+    var colX;
+    if (numCols === 1) {
+      colX = padLeft + chartW / 2;
+    } else {
+      colX = padLeft + (c / (numCols - 1)) * chartW;
+    }
     columns.push({
-      x: padLeft + c * colW + colW / 2,
+      x: colX,
       segIdx: winStart + c
     });
   }
