@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Texturas — Análisis textual multicapa para textos en español" />
+  <meta name="author" content="Ernesto Peña" />
+  <title>Texturas</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@300;400;500;700&display=swap" rel="stylesheet" />
+
+  <!-- React -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.23.9/babel.min.js"></script>
+
+  <!-- D3 + Sankey -->
+  <script src="https://cdn.jsdelivr.net/npm/d3@7.8.5/dist/d3.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
+
+  <!-- Lodash -->
+  <script src="https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 0;
+      background: #111; color: #ddd;
+      font-family: 'Roboto Mono', monospace;
+    }
+    /* Custom scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #1a1a1a; }
+    ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #555; }
+    /* Range input */
+    input[type="range"] {
+      -webkit-appearance: none; appearance: none;
+      background: transparent; cursor: pointer;
+    }
+    input[type="range"]::-webkit-slider-track {
+      height: 3px; background: #333; border-radius: 2px;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 12px; height: 12px; border-radius: 50%;
+      background: #4ecdc4; margin-top: -5px;
+    }
+    input[type="range"]::-moz-range-track {
+      height: 3px; background: #333; border-radius: 2px;
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 12px; height: 12px; border-radius: 50%;
+      background: #4ecdc4; border: none;
+    }
+    /* Focus */
+    :focus-visible { outline: 1px solid #4ecdc4; outline-offset: 2px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- Module loading order (10 files) -->
+  <script type="text/babel" src="src/config.js"></script>
+  <script type="text/babel" src="src/cache.js"></script>
+  <script type="text/babel" src="src/nlp.js"></script>
+  <script type="text/babel" src="src/analyze.js"></script>
+  <script type="text/babel" src="src/export.js"></script>
+  <script type="text/babel" src="src/weave-components.js"></script>
+  <script type="text/babel" src="src/fibras-data.js"></script>
+  <script type="text/babel" src="src/fibras-render.js"></script>
+  <script type="text/babel" src="src/panels.js"></script>
+  <script type="text/babel" src="src/app.js"></script>
+</body>
+</html>
