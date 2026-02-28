@@ -195,12 +195,16 @@ function Texturas() {
       for (var i = 0; i < docs.length; i++) {
         var d = docs[i];
         if (!d.text || d.text.trim().length === 0) continue;
-        var s1 = analyzeStage1(d.text, eng, topN);
+
+        // Strip SEG markers from text before analysis
+        var cleanText = d.text.replace(/---SEG:.+?---/g, "\n\n");
+
+        var s1 = analyzeStage1(cleanText, eng, topN);
         newS1[d.id] = s1;
         var s2 = analyzeStage2(s1, eng, topN, wnDepth, decay, flow);
         newResults[d.id] = s2;
 
-        // Detect custom segments
+        // Detect custom segments from original text
         var segProto = detectSegProtocol(d.text);
         if (segProto) {
           var boundaries = buildCustomSegBoundaries(d.text, segProto, s2.enriched);
@@ -237,7 +241,8 @@ function Texturas() {
     for (var i = 0; i < docs.length; i++) {
       var d = docs[i];
       if (!d.text || d.text.trim().length === 0) continue;
-      var s1 = analyzeStage1(d.text, eng, n);
+      var cleanText = d.text.replace(/---SEG:.+?---/g, "\n\n");
+      var s1 = analyzeStage1(cleanText, eng, n);
       newS1[d.id] = s1;
       newResults[d.id] = analyzeStage2(s1, eng, n, wnDepth, decay, flow);
     }
@@ -672,11 +677,11 @@ function Texturas() {
     // TAB: FIBRAS
     // ════════════════════════════════════════
     tab === "fibras" && React.createElement("div", null,
-      // Controls row
+      // Controls — Row 1: Mode + Color + Emotions
       React.createElement("div", {
         style: {
           display: "flex", gap: T.gap12, alignItems: "center",
-          marginBottom: T.gap12, flexWrap: "wrap"
+          marginBottom: T.gap6, flexWrap: "wrap"
         }
       },
         // Mode selector
@@ -727,6 +732,17 @@ function Texturas() {
           })
         ),
 
+        // Emotion toggle
+        React.createElement(EmoToggle4, { enabledEmos: enabledEmos, setEnabledEmos: setEnabledEmos })
+      ),
+
+      // Controls — Row 2: Seg + Decay + N + Flow + Compare
+      React.createElement("div", {
+        style: {
+          display: "flex", gap: T.gap12, alignItems: "center",
+          marginBottom: T.gap12, flexWrap: "wrap"
+        }
+      },
         // Segments (disabled when custom segments present)
         (function() {
           var activeDocId = selectedViewDocs[0];
@@ -763,8 +779,27 @@ function Texturas() {
           React.createElement(NumInput, { value: topN, onChange: rerunTopN, min: 10, max: 100, width: 45 })
         ),
 
-        // Emotion toggle
-        React.createElement(EmoToggle4, { enabledEmos: enabledEmos, setEnabledEmos: setEnabledEmos }),
+        // Flow direction
+        React.createElement("div", { style: { display: "flex", gap: T.gap4, alignItems: "center" } },
+          React.createElement("span", { style: { fontSize: 9, color: T.textDim } }, "Flujo:"),
+          ["bi", "up", "down"].map(function(f) {
+            var label = f === "bi" ? "Bi" : f === "up" ? "\u2191" : "\u2193";
+            return React.createElement("button", {
+              key: f,
+              onClick: function() { rerunStage2(undefined, f); },
+              style: {
+                background: flow === f ? T.accent + "22" : "transparent",
+                border: "1px solid " + (flow === f ? T.accent : T.border),
+                color: flow === f ? T.accent : T.textDim,
+                borderRadius: T.radius3,
+                padding: "2px 6px",
+                fontSize: 9,
+                fontFamily: T.fontMono,
+                cursor: "pointer"
+              }
+            }, label);
+          })
+        ),
 
         // Compare mode (if multiple docs)
         selectedViewDocs.length > 1 && React.createElement("div", { style: { display: "flex", gap: T.gap4 } },
