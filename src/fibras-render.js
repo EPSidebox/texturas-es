@@ -1,6 +1,7 @@
 // ─────────────────────────────────────────────
 // fibras-render.js — Texturas (ES) v2.0
 // P5 canvas rendering for Fibras visualization
+// Brightness-based encoding (no opacity), HSL color model
 // Reads: T, EC, CC from config.js
 // Reads: buildWindowedLayout from fibras-data.js
 // Reads: React hook aliases from config.js
@@ -8,7 +9,8 @@
 //          FibrasDocStack, FibrasMultiDoc
 // ─────────────────────────────────────────────
 
-// ── Helper: parse hex color to [r, g, b] ──
+// ── Color helpers ──
+
 function _hexToRgb(hex) {
   var h = hex.replace("#", "");
   if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
@@ -16,7 +18,85 @@ function _hexToRgb(hex) {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
-// ── Helper: lerp between two [r,g,b] arrays ──
+function _rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  var mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+  var h = 0, s = 0, l = (mx + mn) / 2;
+  if (mx !== mn) {
+    var d = mx - mn;
+    s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+    if (mx === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+    else if (mx === g) h = ((b - r) / d + 2) / 6;
+    else h = ((r - g) / d + 4) / 6;
+  }
+  return [h * 360, s * 100, l * 100];
+}
+
+function _hslToRgb(h, s, l) {
+  h /= 360; s /= 100; l /= 100;
+  var r, g, b;
+  if (s === 0) { r = g = b = l; }
+  else {
+    var hue2rgb = function(p, q, t) {
+      if (t < 0) t += 1; if (t > 1) t -= 1;
+      if (t < 1/6) return p + (q - p) * 6 * t;
+      if (t < 1/2) return q;
+      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+      return p;
+    };
+    var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    var p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1/3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1/3);
+  }
+  return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+}
+
+function _hexToHsl(hex) {
+  var rgb = _hexToRgb(hex);
+  return _rgbToHsl(rgb[0], rgb[1], rgb[2]);
+}
+
+// Compute a color at given brightness level
+// baseHsl: [h, s, l] of the stream color
+// brightness: 0-1 (0 = near background, 1 = full color)
+// bgL: background lightness (T.bg = #111 ≈ L:6.7)
+var _bgL = 6.7;
+
+function _colorAtBrightness(baseHsl, brightness) {
+  // Interpolate lightness from background to the color's natural lightness
+  var targetL = baseHsl[2];
+  // Ensure minimum lightness difference from background
+  if (targetL < 20) targetL = 20;
+  var l = _bgL + (targetL - _bgL) * brightness;
+  // Keep saturation, slightly reduce at low brightness for natural look
+  var s = baseHsl[1] * (0.3 + brightness * 0.7);
+  return _hslToRgb(baseHsl[0], s, l);
+}
+
+// Lerp between two HSL colors (hue interpolation via shortest path)
+function _lerpHsl(hsl1, hsl2, t) {
+  // Hue: shortest path around the wheel
+  var h1 = hsl1[0], h2 = hsl2[0];
+  var dh = h2 - h1;
+  if (dh > 180) dh -= 360;
+  if (dh < -180) dh += 360;
+  var h = h1 + dh * t;
+  if (h < 0) h += 360;
+  if (h >= 360) h -= 360;
+  return [
+    h,
+    hsl1[1] + (hsl2[1] - hsl1[1]) * t,
+    hsl1[2] + (hsl2[2] - hsl1[2]) * t
+  ];
+}
+
+// Polarity to rgb (for minimap)
+var _polPositive = _hexToRgb(T.positive);
+var _polNegative = _hexToRgb(T.negative);
+var _polNeutral = _hexToRgb(T.neutral);
+
 function _lerpColor(c1, c2, t) {
   return [
     Math.round(c1[0] + (c2[0] - c1[0]) * t),
@@ -25,11 +105,6 @@ function _lerpColor(c1, c2, t) {
   ];
 }
 
-// ── Helper: polarity to rgb ──
-var _polPositive = _hexToRgb(T.positive);
-var _polNegative = _hexToRgb(T.negative);
-var _polNeutral = _hexToRgb(T.neutral);
-
 function _polarityToRgb(pol) {
   if (pol > 0.05) return _lerpColor(_polNeutral, _polPositive, Math.min(1, pol * 4));
   if (pol < -0.05) return _lerpColor(_polNeutral, _polNegative, Math.min(1, -pol * 4));
@@ -37,7 +112,7 @@ function _polarityToRgb(pol) {
 }
 
 // ════════════════════════════════════════════
-// FibrasChart — P5 canvas: streams, nodes, links, guidelines
+// FibrasChart — P5 canvas
 // ════════════════════════════════════════════
 function FibrasChart(props) {
   var containerRef = useRef(null);
@@ -48,11 +123,7 @@ function FibrasChart(props) {
   useEffect(function() {
     if (!containerRef.current || !propsRef.current.layout) return;
 
-    // Clean up previous
-    if (p5Ref.current) {
-      p5Ref.current.remove();
-      p5Ref.current = null;
-    }
+    if (p5Ref.current) { p5Ref.current.remove(); p5Ref.current = null; }
 
     var sketch = function(p) {
       p.setup = function() {
@@ -80,10 +151,10 @@ function FibrasChart(props) {
           return false;
         }
 
-        p.background(17); // #111
+        p.background(17);
 
         // ── Vertical guidelines ──
-        p.stroke(68, 68, 68, 50);
+        p.stroke(255, 255, 255, 18);
         p.strokeWeight(1);
         for (var gi = 0; gi < lay.columns.length; gi++) {
           p.line(lay.columns[gi].x, 0, lay.columns[gi].x, lay.canvasH);
@@ -93,9 +164,8 @@ function FibrasChart(props) {
         // ── Streams: back-to-front ──
         for (var wi = lay.wordSlots.length - 1; wi >= 0; wi--) {
           var slot = lay.wordSlots[wi];
-          var rgb = _hexToRgb(slot.color);
+          var baseHsl = _hexToHsl(slot.color);
           var active = isWordActive(slot.word);
-          var dim = active ? 1.0 : 0.08;
 
           // ── Ribbon links ──
           for (var li = 0; li < slot.links.length; li++) {
@@ -104,13 +174,18 @@ function FibrasChart(props) {
             var sT = src.y, sB = src.y + src.h, sR = src.x + src.w;
             var tT = tgt.y, tB = tgt.y + tgt.h, tL = tgt.x;
             var cp = (tL - sR) / 3;
-            var sA = src.opacity * dim, tA = tgt.opacity * dim;
+
+            // Brightness from secondary metric
+            var srcBri = active ? (0.3 + src.secondaryNorm * 0.7) : 0.06;
+            var tgtBri = active ? (0.3 + tgt.secondaryNorm * 0.7) : 0.06;
             var steps = 12;
 
             p.noStroke();
             for (var si = 0; si < steps; si++) {
               var t0 = si / steps, t1 = (si + 1) / steps;
-              var aMid = sA + (tA - sA) * ((t0 + t1) / 2);
+              var tMid = (t0 + t1) / 2;
+              var bri = srcBri + (tgtBri - srcBri) * tMid;
+              var rgb = _colorAtBrightness(baseHsl, bri);
 
               var tx0 = p.bezierPoint(sR, sR + cp, tL - cp, tL, t0);
               var ty0t = p.bezierPoint(sT, sT, tT, tT, t0);
@@ -119,7 +194,7 @@ function FibrasChart(props) {
               var ty0b = p.bezierPoint(sB, sB, tB, tB, t0);
               var ty1b = p.bezierPoint(sB, sB, tB, tB, t1);
 
-              p.fill(rgb[0], rgb[1], rgb[2], aMid * 255);
+              p.fill(rgb[0], rgb[1], rgb[2]);
               p.beginShape();
               p.vertex(tx0, ty0t);
               p.vertex(tx1, ty1t);
@@ -133,7 +208,9 @@ function FibrasChart(props) {
           for (var ni = 0; ni < slot.nodes.length; ni++) {
             var nd = slot.nodes[ni];
             if (!nd.isReal) continue;
-            p.fill(rgb[0], rgb[1], rgb[2], nd.opacity * dim * 255);
+            var nodeBri = active ? (0.3 + nd.secondaryNorm * 0.7) : 0.06;
+            var nRgb = _colorAtBrightness(baseHsl, nodeBri);
+            p.fill(nRgb[0], nRgb[1], nRgb[2]);
             p.noStroke();
             p.rect(nd.x, nd.y, nd.w, nd.h);
           }
@@ -142,7 +219,9 @@ function FibrasChart(props) {
           if (active || !hasHL) {
             p.textSize(9);
             p.textAlign(p.RIGHT, p.CENTER);
-            p.fill(255, 255, 255, dim * 220);
+            var lblBri = active ? 0.9 : 0.15;
+            var lblRgb = _colorAtBrightness([0, 0, 90], lblBri);
+            p.fill(lblRgb[0], lblRgb[1], lblRgb[2]);
             p.noStroke();
             for (var lci = 0; lci < slot.labelCols.length; lci++) {
               var ln = slot.nodes[slot.labelCols[lci]];
@@ -157,24 +236,31 @@ function FibrasChart(props) {
         if (lay.crossLinks) {
           for (var cli = 0; cli < lay.crossLinks.length; cli++) {
             var cl = lay.crossLinks[cli];
-            var clAct = isWordActive(cl.srcWord) || isWordActive(cl.tgtWord);
-            var clDim = clAct ? 1.0 : 0.08;
+            var clActive = isWordActive(cl.srcWord) || isWordActive(cl.tgtWord);
 
             var cs = cl.srcNode, ct = cl.tgtNode;
-            var csRgb = _hexToRgb(cl.srcColor);
-            var ctRgb = _hexToRgb(cl.tgtColor);
+            var srcHsl = _hexToHsl(cl.srcColor);
+            var tgtHsl = _hexToHsl(cl.tgtColor);
+
             var csT = cs.y, csB = cs.y + cs.h, csR = cs.x + cs.w;
             var ctT = ct.y, ctB = ct.y + ct.h, ctL = ct.x;
             var ccp = (ctL - csR) / 3;
-            var csA = cs.opacity * clDim * 0.5 * cl.similarity;
-            var ctA = ct.opacity * clDim * 0.5 * cl.similarity;
-            var cSteps = 10;
+
+            // Cross-stream: full brightness throughout, color blends
+            var cSrcBri = clActive ? (0.5 + cs.secondaryNorm * 0.5) : 0.06;
+            var cTgtBri = clActive ? (0.5 + ct.secondaryNorm * 0.5) : 0.06;
+            var cSteps = 12;
 
             p.noStroke();
             for (var csi = 0; csi < cSteps; csi++) {
               var ct0 = csi / cSteps, ct1 = (csi + 1) / cSteps;
-              var cMid = csA + (ctA - csA) * ((ct0 + ct1) / 2);
-              var cRgb = _lerpColor(csRgb, ctRgb, (ct0 + ct1) / 2);
+              var cMidT = (ct0 + ct1) / 2;
+
+              // Blend hue from source to target
+              var midHsl = _lerpHsl(srcHsl, tgtHsl, cMidT);
+              // Brightness stays high — interpolate between source and target brightness
+              var cBri = cSrcBri + (cTgtBri - cSrcBri) * cMidT;
+              var cRgb = _colorAtBrightness(midHsl, cBri);
 
               var cx0 = p.bezierPoint(csR, csR + ccp, ctL - ccp, ctL, ct0);
               var cy0t = p.bezierPoint(csT, csT, ctT, ctT, ct0);
@@ -183,7 +269,7 @@ function FibrasChart(props) {
               var cy0b = p.bezierPoint(csB, csB, ctB, ctB, ct0);
               var cy1b = p.bezierPoint(csB, csB, ctB, ctB, ct1);
 
-              p.fill(cRgb[0], cRgb[1], cRgb[2], cMid * 255);
+              p.fill(cRgb[0], cRgb[1], cRgb[2]);
               p.beginShape();
               p.vertex(cx0, cy0t);
               p.vertex(cx1, cy1t);
@@ -207,7 +293,6 @@ function FibrasChart(props) {
         var found = null;
         for (var wi = 0; wi < lay.wordSlots.length; wi++) {
           var slot = lay.wordSlots[wi];
-          // Check nodes
           for (var ni = 0; ni < slot.nodes.length; ni++) {
             var nd = slot.nodes[ni];
             if (!nd.isReal) continue;
@@ -216,7 +301,6 @@ function FibrasChart(props) {
             }
           }
           if (found) break;
-          // Check link bounding boxes
           for (var li = 0; li < slot.links.length; li++) {
             var lk = slot.links[li];
             var lxMin = lk.srcNode.x + lk.srcNode.w;
@@ -272,7 +356,6 @@ function FibrasChart(props) {
     };
   }, [props.layout]);
 
-  // Redraw on interaction state changes
   useEffect(function() {
     if (p5Ref.current) p5Ref.current.redraw();
   }, [props.hoveredWord, props.lockedWords, props.seeds, props.enabledEmos]);
@@ -289,8 +372,7 @@ function FibrasChart(props) {
 }
 
 // ════════════════════════════════════════════
-// FibrasMinimap — polarity bg + arousal line + navigation
-// Always visible, full chart width
+// FibrasMinimap
 // ════════════════════════════════════════════
 function FibrasMinimap(props) {
   var numSegs = props.numSegs;
@@ -334,7 +416,6 @@ function FibrasMinimap(props) {
   return React.createElement("div", {
     style: { display: "flex", alignItems: "center", gap: T.gap6 }
   },
-    // ◀ (always reserve space)
     React.createElement("button", {
       onClick: function() { if (showNav) setWinStart(Math.max(0, winStart - 1)); },
       disabled: !showNav || winStart <= 0,
@@ -349,7 +430,6 @@ function FibrasMinimap(props) {
       }
     }, "\u25C0"),
 
-    // Bar
     React.createElement("div", {
       onClick: handleClick,
       style: {
@@ -358,7 +438,6 @@ function FibrasMinimap(props) {
         cursor: "pointer", overflow: "hidden", flexShrink: 0
       }
     },
-      // Polarity backgrounds
       segPolarity.map(function(pol, i) {
         var rgb = _polarityToRgb(pol);
         return React.createElement("div", {
@@ -371,7 +450,6 @@ function FibrasMinimap(props) {
           }
         });
       }),
-      // Arousal line
       arousalPts.length > 1 && React.createElement("svg", {
         style: { position: "absolute", top: 0, left: 0, width: chartWidth, height: barH, pointerEvents: "none" }
       },
@@ -381,7 +459,6 @@ function FibrasMinimap(props) {
           strokeLinejoin: "round", opacity: 0.8
         })
       ),
-      // Navigator
       showNav && React.createElement("div", {
         style: {
           position: "absolute", left: navX, top: 0,
@@ -392,7 +469,6 @@ function FibrasMinimap(props) {
       })
     ),
 
-    // ▶ (always reserve space)
     React.createElement("button", {
       onClick: function() { if (showNav) setWinStart(Math.min(maxStart, winStart + 1)); },
       disabled: !showNav || winStart >= maxStart,
@@ -410,7 +486,7 @@ function FibrasMinimap(props) {
 }
 
 // ════════════════════════════════════════════
-// FibrasEmoBars — emotion intensity per visible segment
+// FibrasEmoBars
 // ════════════════════════════════════════════
 function FibrasEmoBars(props) {
   var layout = props.layout;
@@ -456,7 +532,7 @@ function FibrasEmoBars(props) {
 }
 
 // ════════════════════════════════════════════
-// FibrasDocStack — single doc: minimap + emo + labels + chart
+// FibrasDocStack
 // ════════════════════════════════════════════
 function FibrasDocStack(props) {
   var fibras = props.fibras;
@@ -502,7 +578,6 @@ function FibrasDocStack(props) {
 
   var chartAreaW = canvasW - (layout ? layout.padLeft : 80) - 20;
 
-  // Segment labels for tooltip
   var segLabels = layout ? layout.columns.map(function(col) {
     return { segIdx: col.segIdx, x: col.x, label: col.label };
   }) : [];
@@ -511,12 +586,11 @@ function FibrasDocStack(props) {
   return React.createElement("div", {
     style: { display: "flex", flexDirection: "column", gap: T.gap4, position: "relative" }
   },
-    // Doc label
     props.docLabel && React.createElement("div", {
       style: { fontSize: T.fs10, color: T.textMid, fontFamily: T.fontMono }
     }, props.docLabel),
 
-    // Minimap (extended 66px left, 14px right)
+    // Minimap (extended)
     React.createElement("div", {
       style: { marginLeft: (layout ? layout.padLeft : 80) - 66, marginRight: -14 }
     },
@@ -535,7 +609,7 @@ function FibrasDocStack(props) {
       layout: layout, enabledEmos: enabledEmos
     }),
 
-    // Segment labels (ONLY source of segment numbers)
+    // Segment labels (only source)
     segLabels.length > 0 && React.createElement("div", {
       style: { position: "relative", height: 14, width: canvasW, marginBottom: 2 }
     },
@@ -559,7 +633,6 @@ function FibrasDocStack(props) {
           }
         }, txt);
       }),
-      // Tooltip
       activeTip && React.createElement("div", {
         style: {
           position: "absolute",
@@ -582,7 +655,7 @@ function FibrasDocStack(props) {
       )
     ),
 
-    // P5 Chart (no segment labels inside canvas)
+    // P5 Chart
     React.createElement(FibrasChart, {
       layout: layout, seeds: seeds,
       hoveredWord: hoveredWord, setHoveredWord: setHoveredWord,
@@ -593,7 +666,7 @@ function FibrasDocStack(props) {
 }
 
 // ════════════════════════════════════════════
-// FibrasMultiDoc — routes single / stacked
+// FibrasMultiDoc
 // ════════════════════════════════════════════
 function FibrasMultiDoc(props) {
   var selectedArr = props.selectedArr || [];
