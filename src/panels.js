@@ -60,6 +60,8 @@ function EmoToggle4(props) {
 //   setSeeds,       — setter for full seed Set
 //   sortBy,         — "freq" | "relevance" | "alpha"
 //   setSortBy,      — setter
+//   ngMode,         — 1 | 2 | 3 (unigrams, bigrams, trigrams)
+//   setNgMode,      — setter
 //   freqMap,        — full frequency map (for seed input validation)
 //   maxFreq,        — for bar normalization
 //   maxRel,         — for bar normalization
@@ -73,6 +75,8 @@ function WordPanel(props) {
   var setSeeds = props.setSeeds;
   var sortBy = props.sortBy;
   var setSortBy = props.setSortBy;
+  var ngMode = props.ngMode || 1;
+  var setNgMode = props.setNgMode;
   var freqMap = props.freqMap || {};
   var maxFreq = props.maxFreq || 1;
   var maxRel = props.maxRel || 1;
@@ -209,6 +213,32 @@ function WordPanel(props) {
               cursor: "pointer"
             }
           }, label);
+        })
+      )
+    ),
+
+    // N-gram toggle
+    setNgMode && React.createElement("div", {
+      style: { display: "flex", justifyContent: "space-between", alignItems: "center" }
+    },
+      React.createElement("span", { style: { fontSize: 9, color: T.textDim } }, "N-grama:"),
+      React.createElement("div", { style: { display: "flex", gap: 2 } },
+        [1, 2, 3].map(function(n) {
+          var active = ngMode === n;
+          return React.createElement("button", {
+            key: n,
+            onClick: function() { setNgMode(n); },
+            style: {
+              background: active ? T.accent + "22" : "transparent",
+              border: "1px solid " + (active ? T.accent : T.border),
+              color: active ? T.accent : T.textDim,
+              borderRadius: T.radius3,
+              padding: "1px 6px",
+              fontSize: 9,
+              fontFamily: T.fontMono,
+              cursor: "pointer"
+            }
+          }, String(n));
         })
       )
     ),

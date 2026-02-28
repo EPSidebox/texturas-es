@@ -153,23 +153,43 @@ function segmentText(enriched, numSegs) {
     var end = (s === numSegs - 1) ? content.length : (s + 1) * segSize;
     var tokens = content.slice(start, end);
     var fm = {};
+    var lemmas = [];
     for (var t = 0; t < tokens.length; t++) {
       var lem = tokens[t].lemma;
       fm[lem] = (fm[lem] || 0) + 1;
+      lemmas.push(lem);
     }
-    segs.push({ idx: s, tokens: tokens, freqMap: fm, normFreqMap: {}, label: null });
-  }
-  // Compute normalized frequency per segment
-  for (var ns = 0; ns < segs.length; ns++) {
-    var seg = segs[ns];
-    var total = seg.tokens.length;
+    var normFm = {};
+    var total = tokens.length;
     if (total > 0) {
-      for (var nw in seg.freqMap) {
-        if (seg.freqMap.hasOwnProperty(nw)) {
-          seg.normFreqMap[nw] = seg.freqMap[nw] / total;
-        }
+      for (var nw in fm) {
+        if (fm.hasOwnProperty(nw)) normFm[nw] = fm[nw] / total;
       }
     }
+    // Bigram and trigram frequency maps
+    var ng2Map = {};
+    var ng3Map = {};
+    for (var ni = 0; ni < lemmas.length - 1; ni++) {
+      var bg = lemmas[ni] + " " + lemmas[ni + 1];
+      ng2Map[bg] = (ng2Map[bg] || 0) + 1;
+    }
+    for (var ni2 = 0; ni2 < lemmas.length - 2; ni2++) {
+      var tg = lemmas[ni2] + " " + lemmas[ni2 + 1] + " " + lemmas[ni2 + 2];
+      ng3Map[tg] = (ng3Map[tg] || 0) + 1;
+    }
+    // Normalized n-gram maps
+    var normNg2 = {};
+    var normNg3 = {};
+    var ng2Total = Math.max(1, lemmas.length - 1);
+    var ng3Total = Math.max(1, lemmas.length - 2);
+    for (var b in ng2Map) { if (ng2Map.hasOwnProperty(b)) normNg2[b] = ng2Map[b] / ng2Total; }
+    for (var tr in ng3Map) { if (ng3Map.hasOwnProperty(tr)) normNg3[tr] = ng3Map[tr] / ng3Total; }
+
+    segs.push({
+      idx: s, tokens: tokens, freqMap: fm, normFreqMap: normFm, label: null,
+      ng2Map: ng2Map, ng3Map: ng3Map, normNg2Map: normNg2, normNg3Map: normNg3,
+      lemmas: lemmas
+    });
   }
   return segs;
 }
@@ -189,20 +209,39 @@ function segmentTextCustom(enriched, customSegs) {
     var cs = customSegs[s];
     var tokens = content.slice(cs.startToken, cs.endToken);
     var fm = {};
+    var lemmas = [];
     for (var t = 0; t < tokens.length; t++) {
       var lem = tokens[t].lemma;
       fm[lem] = (fm[lem] || 0) + 1;
+      lemmas.push(lem);
     }
     var normFm = {};
     var total = tokens.length;
     if (total > 0) {
-      for (var nw in fm) {
-        if (fm.hasOwnProperty(nw)) {
-          normFm[nw] = fm[nw] / total;
-        }
-      }
+      for (var nw in fm) { if (fm.hasOwnProperty(nw)) normFm[nw] = fm[nw] / total; }
     }
-    segs.push({ idx: s, tokens: tokens, freqMap: fm, normFreqMap: normFm, label: cs.label });
+    var ng2Map = {};
+    var ng3Map = {};
+    for (var ni = 0; ni < lemmas.length - 1; ni++) {
+      var bg = lemmas[ni] + " " + lemmas[ni + 1];
+      ng2Map[bg] = (ng2Map[bg] || 0) + 1;
+    }
+    for (var ni2 = 0; ni2 < lemmas.length - 2; ni2++) {
+      var tg = lemmas[ni2] + " " + lemmas[ni2 + 1] + " " + lemmas[ni2 + 2];
+      ng3Map[tg] = (ng3Map[tg] || 0) + 1;
+    }
+    var normNg2 = {};
+    var normNg3 = {};
+    var ng2Total = Math.max(1, lemmas.length - 1);
+    var ng3Total = Math.max(1, lemmas.length - 2);
+    for (var b in ng2Map) { if (ng2Map.hasOwnProperty(b)) normNg2[b] = ng2Map[b] / ng2Total; }
+    for (var tr in ng3Map) { if (ng3Map.hasOwnProperty(tr)) normNg3[tr] = ng3Map[tr] / ng3Total; }
+
+    segs.push({
+      idx: s, tokens: tokens, freqMap: fm, normFreqMap: normFm, label: cs.label,
+      ng2Map: ng2Map, ng3Map: ng3Map, normNg2Map: normNg2, normNg3Map: normNg3,
+      lemmas: lemmas
+    });
   }
   return segs;
 }
@@ -212,7 +251,7 @@ function segmentTextCustom(enriched, customSegs) {
 // mode: "seeds" | "recurrentes" | "persistentes"
 // sortMode: "freq" | "relevance"
 // Returns ordered array of word strings.
-function selectWords(freqMap, relevanceMap, seeds, mode, topN, sortMode) {
+function selectWords(freqMap, relevanceMap, seeds, mode, topN, sortMode, ngMode) {
   if (mode === "seeds") {
     var out = [];
     seeds.forEach(function(w) {
@@ -221,22 +260,27 @@ function selectWords(freqMap, relevanceMap, seeds, mode, topN, sortMode) {
     return out;
   }
 
-  // Build candidate list from ALL content words (full freqMap)
-  // Filter out single-character words (noise from tokenization)
+  // Choose the right frequency map based on ngMode
+  var srcMap = freqMap;
+  // For n-grams, relevance doesn't apply (no WordNet for multi-word),
+  // so we use frequency=1 as default relevance
+  var useRelevance = ngMode === 1;
+
+  // Build candidate list
   var candidates = [];
   var w;
-  for (w in freqMap) {
-    if (!freqMap.hasOwnProperty(w)) continue;
-    if (w.length < 2) continue;
+  for (w in srcMap) {
+    if (!srcMap.hasOwnProperty(w)) continue;
+    if (ngMode === 1 && w.length < 2) continue;
     candidates.push({
       word: w,
-      freq: freqMap[w],
-      rel: relevanceMap[w] || 1
+      freq: srcMap[w],
+      rel: useRelevance ? (relevanceMap[w] || 1) : 1
     });
   }
 
   // Sort with stable tiebreaking
-  if (sortMode === "relevance") {
+  if (sortMode === "relevance" && useRelevance) {
     candidates.sort(function(a, b) {
       if (b.rel !== a.rel) return b.rel - a.rel;
       if (b.freq !== a.freq) return b.freq - a.freq;
@@ -262,20 +306,27 @@ function selectWords(freqMap, relevanceMap, seeds, mode, topN, sortMode) {
 // Uses raw frequency + word2vec similarity boost from eng.vec.
 // Also computes hybrid relevance per segment: globalRel × localActivation.
 // Returns [{word: {freq: n, rel: n, act: n}, ...}, ...] (one object per segment)
-function computeSegData(segments, nodeWords, eng, decay, relevanceMap) {
+function computeSegData(segments, nodeWords, eng, decay, relevanceMap, ngMode) {
   var result = [];
   for (var s = 0; s < segments.length; s++) {
     var seg = segments[s];
     var row = {};
+
+    // Choose frequency maps based on ngMode
+    var rawMap, normMap;
+    if (ngMode === 2) { rawMap = seg.ng2Map || {}; normMap = seg.normNg2Map || {}; }
+    else if (ngMode === 3) { rawMap = seg.ng3Map || {}; normMap = seg.normNg3Map || {}; }
+    else { rawMap = seg.freqMap; normMap = seg.normFreqMap; }
+
     for (var wi = 0; wi < nodeWords.length; wi++) {
       var w = nodeWords[wi];
-      var baseFreq = seg.freqMap[w] || 0;
-      var normFreq = seg.normFreqMap[w] || 0;
+      var baseFreq = rawMap[w] || 0;
+      var normFreq = normMap[w] || 0;
 
-      // Word2vec boost: if word absent, check if similar words are present
+      // Word2vec boost only for unigrams
       var boost = 0;
       var normBoost = 0;
-      if (baseFreq === 0 && eng && eng.vec && eng.vec.isLoaded()) {
+      if (ngMode === 1 && baseFreq === 0 && eng && eng.vec && eng.vec.isLoaded()) {
         for (var lem in seg.freqMap) {
           if (!seg.freqMap.hasOwnProperty(lem)) continue;
           var sim = eng.vec.similarity(w, lem);
@@ -289,7 +340,7 @@ function computeSegData(segments, nodeWords, eng, decay, relevanceMap) {
 
       var localAct = baseFreq + boost;
       var localNormAct = normFreq + normBoost;
-      var globalRel = (relevanceMap && relevanceMap[w]) ? relevanceMap[w] : 1;
+      var globalRel = (ngMode === 1 && relevanceMap && relevanceMap[w]) ? relevanceMap[w] : 1;
 
       row[w] = {
         freq: localAct,
@@ -336,9 +387,10 @@ function computeSegEmo(segments) {
 
 // ── computeFibras ──
 // Orchestrator. Returns all data needed for rendering.
-function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mode, topN, decay, sortMode, customSegBoundaries) {
+function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mode, topN, decay, sortMode, customSegBoundaries, ngMode) {
   var segments;
   var hasCustomSegs = customSegBoundaries && customSegBoundaries.length > 0;
+  var ng = ngMode || 1;
 
   if (hasCustomSegs) {
     segments = segmentTextCustom(enriched, customSegBoundaries);
@@ -347,25 +399,45 @@ function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mod
     segments = segmentText(enriched, numSegs);
   }
 
+  // Build global n-gram frequency map if needed
+  var globalNgMap = freqMap; // default: unigrams
+  if (ng === 2) {
+    globalNgMap = {};
+    for (var si = 0; si < segments.length; si++) {
+      var m2 = segments[si].ng2Map || {};
+      for (var k2 in m2) { if (m2.hasOwnProperty(k2)) globalNgMap[k2] = (globalNgMap[k2] || 0) + m2[k2]; }
+    }
+  } else if (ng === 3) {
+    globalNgMap = {};
+    for (var si2 = 0; si2 < segments.length; si2++) {
+      var m3 = segments[si2].ng3Map || {};
+      for (var k3 in m3) { if (m3.hasOwnProperty(k3)) globalNgMap[k3] = (globalNgMap[k3] || 0) + m3[k3]; }
+    }
+  }
+
+  // For n-grams, relevance doesn't apply
+  var effectiveRelMap = ng === 1 ? relevanceMap : {};
+
   var nodeWords;
   if (mode === "persistentes") {
-    var ranked = selectWords(freqMap, relevanceMap, seeds, "recurrentes", Object.keys(freqMap).length, sortMode);
+    var ranked = selectWords(globalNgMap, effectiveRelMap, seeds, "recurrentes", Object.keys(globalNgMap).length, sortMode, ng);
     var persistent = [];
     for (var ri = 0; ri < ranked.length; ri++) {
       var w = ranked[ri];
       var segCount = 0;
-      for (var si = 0; si < segments.length; si++) {
-        if (segments[si].freqMap[w]) segCount++;
+      for (var sci = 0; sci < segments.length; sci++) {
+        var checkMap = ng === 2 ? (segments[sci].ng2Map || {}) : ng === 3 ? (segments[sci].ng3Map || {}) : segments[sci].freqMap;
+        if (checkMap[w]) segCount++;
       }
       if (segCount >= 2) persistent.push(w);
       if (persistent.length >= topN) break;
     }
     nodeWords = persistent;
   } else {
-    nodeWords = selectWords(freqMap, relevanceMap, seeds, mode, topN, sortMode);
+    nodeWords = selectWords(globalNgMap, effectiveRelMap, seeds, mode, topN, sortMode, ng);
   }
 
-  var segData = computeSegData(segments, nodeWords, eng, decay, relevanceMap);
+  var segData = computeSegData(segments, nodeWords, eng, decay, relevanceMap, ng);
   var segEmo = computeSegEmo(segments);
 
   // Compute global maxes for normalization
@@ -373,16 +445,16 @@ function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mod
   var maxRel = 0;
   var maxSegFreq = 0;
   var maxSegRel = 0;
+  var maxSegNormFreq = 0;
   for (var i = 0; i < nodeWords.length; i++) {
     var ww = nodeWords[i];
-    if (freqMap[ww] > maxFreq) maxFreq = freqMap[ww];
-    if ((relevanceMap[ww] || 1) > maxRel) maxRel = relevanceMap[ww] || 1;
+    if ((globalNgMap[ww] || 0) > maxFreq) maxFreq = globalNgMap[ww];
+    if ((effectiveRelMap[ww] || 1) > maxRel) maxRel = effectiveRelMap[ww] || 1;
   }
-  // Per-segment maxes (for node height normalization)
-  var maxSegNormFreq = 0;
-  for (var si2 = 0; si2 < segData.length; si2++) {
+  // Per-segment maxes
+  for (var si3 = 0; si3 < segData.length; si3++) {
     for (var wi2 = 0; wi2 < nodeWords.length; wi2++) {
-      var entry = segData[si2][nodeWords[wi2]];
+      var entry = segData[si3][nodeWords[wi2]];
       if (entry) {
         if (entry.freq > maxSegFreq) maxSegFreq = entry.freq;
         if (entry.rel > maxSegRel) maxSegRel = entry.rel;
@@ -391,8 +463,10 @@ function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mod
     }
   }
 
-  // Compute word2vec clusters for color mode
-  var vecClusterMap = clusterByVec(nodeWords, eng, Math.min(8, Math.max(3, Math.floor(nodeWords.length / 4))));
+  // Word2vec clusters (only for unigrams)
+  var vecClusterMap = ng === 1
+    ? clusterByVec(nodeWords, eng, Math.min(8, Math.max(3, Math.floor(nodeWords.length / 4))))
+    : {};
 
   return {
     nodeWords: nodeWords,
@@ -400,8 +474,8 @@ function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mod
     segData: segData,
     segEmo: segEmo,
     numSegs: numSegs,
-    freqMap: freqMap,
-    relevanceMap: relevanceMap,
+    freqMap: globalNgMap,
+    relevanceMap: effectiveRelMap,
     maxFreq: maxFreq || 1,
     maxRel: maxRel || 1,
     maxSegFreq: maxSegFreq || 1,
@@ -409,7 +483,8 @@ function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mod
     maxSegNormFreq: maxSegNormFreq || 1,
     decay: decay,
     vecClusterMap: vecClusterMap,
-    hasCustomSegs: hasCustomSegs
+    hasCustomSegs: hasCustomSegs,
+    ngMode: ng
   };
 }
 

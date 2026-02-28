@@ -114,6 +114,10 @@ function Texturas() {
   var _sb = useState("freq");
   var sortBy = _sb[0], setSortBy = _sb[1];
 
+  // ── N-gram mode ──
+  var _ng = useState(1);
+  var ngMode = _ng[0], setNgMode = _ng[1];
+
   // ── Locked words (click-to-fix highlighting) ──
   var _lw = useState(new Set());
   var lockedWords = _lw[0], setLockedWords = _lw[1];
@@ -327,11 +331,12 @@ function Texturas() {
         res.enriched, res.freqMap, res.relevanceMap, eng,
         seeds, fibrasSegs, fibrasMode, topN, decay,
         sortBy === "relevance" ? "relevance" : "freq",
-        csb
+        csb,
+        ngMode
       );
     }
     return map;
-  }, [selectedViewDocs, perDocResults, seeds, fibrasSegs, fibrasMode, topN, decay, sortBy, customSegsByDoc]);
+  }, [selectedViewDocs, perDocResults, seeds, fibrasSegs, fibrasMode, topN, decay, sortBy, customSegsByDoc, ngMode]);
 
   // ── Word list for panel (from fibras data) ──
   var fibrasWords = useMemo(function() {
@@ -862,6 +867,8 @@ function Texturas() {
           setSeeds: setSeeds,
           sortBy: sortBy,
           setSortBy: setSortBy,
+          ngMode: ngMode,
+          setNgMode: setNgMode,
           freqMap: perDocResults[selectedViewDocs[0]] ? perDocResults[selectedViewDocs[0]].freqMap : {},
           maxFreq: perDocResults[selectedViewDocs[0]] ? perDocResults[selectedViewDocs[0]].maxFreq : 1,
           maxRel: perDocResults[selectedViewDocs[0]] ? perDocResults[selectedViewDocs[0]].maxRel : 1
