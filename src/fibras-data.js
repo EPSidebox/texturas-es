@@ -222,10 +222,12 @@ function selectWords(freqMap, relevanceMap, seeds, mode, topN, sortMode) {
   }
 
   // Build candidate list from ALL content words (full freqMap)
+  // Filter out single-character words (noise from tokenization)
   var candidates = [];
   var w;
   for (w in freqMap) {
     if (!freqMap.hasOwnProperty(w)) continue;
+    if (w.length < 2) continue;
     candidates.push({
       word: w,
       freq: freqMap[w],

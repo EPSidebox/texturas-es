@@ -207,7 +207,7 @@ function Texturas() {
         // Detect custom segments from original text
         var segProto = detectSegProtocol(d.text);
         if (segProto) {
-          var boundaries = buildCustomSegBoundaries(d.text, segProto, s2.enriched);
+          var boundaries = buildCustomSegBoundaries(d.text, segProto, s2.enriched, eng);
           newCsb[d.id] = boundaries;
         }
       }
