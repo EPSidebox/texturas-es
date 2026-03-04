@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────
 // fibras-render.js — Texturas (ES) v2.0
 // P5 canvas rendering for Fibras visualization
-// Brightness-based encoding (no opacity), HSL color model
+// Canonical Sankey transparency, HSL color model
 // Reads: T, EC, CC from config.js
 // Reads: buildWindowedLayout from fibras-data.js
 // Reads: React hook aliases from config.js
@@ -58,26 +58,8 @@ function _hexToHsl(hex) {
   return _rgbToHsl(rgb[0], rgb[1], rgb[2]);
 }
 
-// Compute a color at given brightness level
-// baseHsl: [h, s, l] of the stream color
-// brightness: 0-1 (0 = near background, 1 = full color)
-// bgL: background lightness (T.bg = #111 ≈ L:6.7)
-var _bgL = 6.7;
-
-function _colorAtBrightness(baseHsl, brightness) {
-  // Interpolate lightness from background to the color's natural lightness
-  var targetL = baseHsl[2];
-  // Ensure minimum lightness difference from background
-  if (targetL < 20) targetL = 20;
-  var l = _bgL + (targetL - _bgL) * brightness;
-  // Keep saturation, slightly reduce at low brightness for natural look
-  var s = baseHsl[1] * (0.3 + brightness * 0.7);
-  return _hslToRgb(baseHsl[0], s, l);
-}
-
-// Lerp between two HSL colors (hue interpolation via shortest path)
+// Lerp between two HSL colors via shortest hue path
 function _lerpHsl(hsl1, hsl2, t) {
-  // Hue: shortest path around the wheel
   var h1 = hsl1[0], h2 = hsl2[0];
   var dh = h2 - h1;
   if (dh > 180) dh -= 360;
@@ -111,6 +93,47 @@ function _polarityToRgb(pol) {
   return _polNeutral;
 }
 
+// ── Ribbon drawing (shared by regular links and cross-stream links) ──
+// sT/sB: source top/bottom y
+// sR: source right x
+// tT/tB: target top/bottom y
+// tL: target left x
+// getColor(t): function returning p5 color string at interpolation t
+// p: p5 instance
+function _drawRibbon(p, sT, sB, sR, tT, tB, tL, getColor, steps) {
+  var baseCp = (tL - sR) / 3;
+  // Independent control points per edge based on vertical travel distance
+  var cpT = baseCp + Math.abs(tT - sT) * 0.4;
+  var cpB = baseCp + Math.abs(tB - sB) * 0.4;
+
+  p.noStroke();
+  for (var si = 0; si < steps; si++) {
+    var t0 = si / steps, t1 = (si + 1) / steps, tMid = (t0 + t1) / 2;
+
+    var x0  = p.bezierPoint(sR, sR + cpT, tL - cpT, tL, t0);
+    var x1  = p.bezierPoint(sR, sR + cpT, tL - cpT, tL, t1);
+    var x0b = p.bezierPoint(sR, sR + cpB, tL - cpB, tL, t0);
+    var x1b = p.bezierPoint(sR, sR + cpB, tL - cpB, tL, t1);
+
+    var y0t = p.bezierPoint(sT, sT, tT, tT, t0);
+    var y1t = p.bezierPoint(sT, sT, tT, tT, t1);
+    var y0b = p.bezierPoint(sB, sB, tB, tB, t0);
+    var y1b = p.bezierPoint(sB, sB, tB, tB, t1);
+
+    // Sort y-values to prevent self-intersecting quads
+    var lo0 = Math.min(y0t, y0b), hi0 = Math.max(y0t, y0b);
+    var lo1 = Math.min(y1t, y1b), hi1 = Math.max(y1t, y1b);
+
+    p.fill(getColor(tMid));
+    p.beginShape();
+    p.vertex(x0,  lo0);
+    p.vertex(x1,  lo1);
+    p.vertex(x1b, hi1);
+    p.vertex(x0b, hi0);
+    p.endShape(p.CLOSE);
+  }
+}
+
 // ════════════════════════════════════════════
 // FibrasChart — P5 canvas
 // ════════════════════════════════════════════
@@ -133,6 +156,7 @@ function FibrasChart(props) {
         ).style("display", "block");
         p.textFont("Roboto Mono");
         p.noLoop();
+        p.colorMode(p.RGB, 255, 255, 255, 1);
       };
 
       p.draw = function() {
@@ -154,7 +178,7 @@ function FibrasChart(props) {
         p.background(17);
 
         // ── Vertical guidelines ──
-        p.stroke(255, 255, 255, 18);
+        p.stroke(255, 255, 255, 0.20);
         p.strokeWeight(1);
         for (var gi = 0; gi < lay.columns.length; gi++) {
           p.line(lay.columns[gi].x, 0, lay.columns[gi].x, lay.canvasH);
@@ -164,53 +188,90 @@ function FibrasChart(props) {
         // ── Streams: back-to-front ──
         for (var wi = lay.wordSlots.length - 1; wi >= 0; wi--) {
           var slot = lay.wordSlots[wi];
-          var baseHsl = _hexToHsl(slot.color);
+          var rgb = _hexToRgb(slot.color);
           var active = isWordActive(slot.word);
 
           // ── Ribbon links ──
-          for (var li = 0; li < slot.links.length; li++) {
-            var lk = slot.links[li];
-            var src = lk.srcNode, tgt = lk.tgtNode;
-            var sT = src.y, sB = src.y + src.h, sR = src.x + src.w;
-            var tT = tgt.y, tB = tgt.y + tgt.h, tL = tgt.x;
-            var cp = (tL - sR) / 3;
+          for (var ci = 0; ci < lay.numCols - 1; ci++) {
+            var src = slot.nodes[ci];
+            var tgt = slot.nodes[ci + 1];
 
-            // Brightness from secondary metric
-            var srcBri = active ? (0.3 + src.secondaryNorm * 0.7) : 0.06;
-            var tgtBri = active ? (0.3 + tgt.secondaryNorm * 0.7) : 0.06;
-            var steps = 12;
-
-            p.noStroke();
-            for (var si = 0; si < steps; si++) {
-              var t0 = si / steps, t1 = (si + 1) / steps;
-              var tMid = (t0 + t1) / 2;
-              var bri = srcBri + (tgtBri - srcBri) * tMid;
-              var rgb = _colorAtBrightness(baseHsl, bri);
-
-              var tx0 = p.bezierPoint(sR, sR + cp, tL - cp, tL, t0);
-              var ty0t = p.bezierPoint(sT, sT, tT, tT, t0);
-              var tx1 = p.bezierPoint(sR, sR + cp, tL - cp, tL, t1);
-              var ty1t = p.bezierPoint(sT, sT, tT, tT, t1);
-              var ty0b = p.bezierPoint(sB, sB, tB, tB, t0);
-              var ty1b = p.bezierPoint(sB, sB, tB, tB, t1);
-
-              p.fill(rgb[0], rgb[1], rgb[2]);
-              p.beginShape();
-              p.vertex(tx0, ty0t);
-              p.vertex(tx1, ty1t);
-              p.vertex(tx1, ty1b);
-              p.vertex(tx0, ty0b);
-              p.endShape(p.CLOSE);
+            // Fade out: src is real, tgt is ghost
+            if (src.isReal && !tgt.isReal) {
+              // Suppress fade-out if this node is a cross-stream source
+              var isCrossSrc = false;
+              for (var xci = 0; xci < lay.crossLinks.length; xci++) {
+                if (lay.crossLinks[xci].srcSlotIdx === wi && lay.crossLinks[xci].srcCol === ci) {
+                  isCrossSrc = true; break;
+                }
+              }
+              if (!isCrossSrc) {
+                var ghostX  = tgt.x;
+                var ghostCy = tgt.y + (slot.slotH / 2);
+                var ghostH  = Math.max(2, src.h * 0.3);
+                var ghostT  = ghostCy - ghostH / 2;
+                var ghostB  = ghostCy + ghostH / 2;
+                var srcOp   = active ? src.opacity : 0.06;
+                (function(src, ghostT, ghostB, ghostX, rgb, srcOp) {
+                  _drawRibbon(p,
+                    src.y, src.y + src.h, src.x + src.w,
+                    ghostT, ghostB, ghostX,
+                    function(t) { return p.color(rgb[0], rgb[1], rgb[2], srcOp * (1 - t)); },
+                    16
+                  );
+                })(src, ghostT, ghostB, ghostX, rgb, srcOp);
+              }
+              continue;
             }
+
+            // Fade in: src is ghost, tgt is real
+            if (!src.isReal && tgt.isReal) {
+              // Suppress fade-in if this node is a cross-stream target
+              var isCrossTgt = false;
+              for (var xcj = 0; xcj < lay.crossLinks.length; xcj++) {
+                if (lay.crossLinks[xcj].tgtSlotIdx === wi && lay.crossLinks[xcj].tgtCol === ci + 1) {
+                  isCrossTgt = true; break;
+                }
+              }
+              if (!isCrossTgt) {
+                var ghostX2  = src.x + src.w;
+                var ghostCy2 = src.y + (slot.slotH / 2);
+                var ghostH2  = Math.max(2, tgt.h * 0.3);
+                var ghostT2  = ghostCy2 - ghostH2 / 2;
+                var ghostB2  = ghostCy2 + ghostH2 / 2;
+                var tgtOp    = active ? tgt.opacity : 0.06;
+                (function(tgt, ghostT2, ghostB2, ghostX2, rgb, tgtOp) {
+                  _drawRibbon(p,
+                    ghostT2, ghostB2, ghostX2,
+                    tgt.y, tgt.y + tgt.h, tgt.x,
+                    function(t) { return p.color(rgb[0], rgb[1], rgb[2], tgtOp * t); },
+                    16
+                  );
+                })(tgt, ghostT2, ghostB2, ghostX2, rgb, tgtOp);
+              }
+              continue;
+            }
+
+            // Regular ribbon: both real
+            if (!src.isReal || !tgt.isReal) continue;
+            (function(src, tgt, rgb, active) {
+              var srcOp = active ? src.opacity : 0.06;
+              var tgtOp = active ? tgt.opacity : 0.06;
+              _drawRibbon(p,
+                src.y, src.y + src.h, src.x + src.w,
+                tgt.y, tgt.y + tgt.h, tgt.x,
+                function(t) { return p.color(rgb[0], rgb[1], rgb[2], srcOp + (tgtOp - srcOp) * t); },
+                16
+              );
+            })(src, tgt, rgb, active);
           }
 
           // ── Nodes ──
           for (var ni = 0; ni < slot.nodes.length; ni++) {
             var nd = slot.nodes[ni];
             if (!nd.isReal) continue;
-            var nodeBri = active ? (0.3 + nd.secondaryNorm * 0.7) : 0.06;
-            var nRgb = _colorAtBrightness(baseHsl, nodeBri);
-            p.fill(nRgb[0], nRgb[1], nRgb[2]);
+            var ndOp = active ? nd.opacity : 0.06;
+            p.fill(p.color(rgb[0], rgb[1], rgb[2], ndOp));
             p.noStroke();
             p.rect(nd.x, nd.y, nd.w, nd.h);
           }
@@ -219,9 +280,7 @@ function FibrasChart(props) {
           if (active || !hasHL) {
             p.textSize(9);
             p.textAlign(p.RIGHT, p.CENTER);
-            var lblBri = active ? 0.9 : 0.15;
-            var lblRgb = _colorAtBrightness([0, 0, 90], lblBri);
-            p.fill(lblRgb[0], lblRgb[1], lblRgb[2]);
+            p.fill(p.color(180, 180, 180, active ? 0.85 : 0.15));
             p.noStroke();
             for (var lci = 0; lci < slot.labelCols.length; lci++) {
               var ln = slot.nodes[slot.labelCols[lci]];
@@ -241,47 +300,41 @@ function FibrasChart(props) {
             var cs = cl.srcNode, ct = cl.tgtNode;
             var srcHsl = _hexToHsl(cl.srcColor);
             var tgtHsl = _hexToHsl(cl.tgtColor);
+            var cSrcOp = clActive ? cs.opacity : 0.06;
+            var cTgtOp = clActive ? ct.opacity : 0.06;
 
-            var csT = cs.y, csB = cs.y + cs.h, csR = cs.x + cs.w;
-            var ctT = ct.y, ctB = ct.y + ct.h, ctL = ct.x;
-            var ccp = (ctL - csR) / 3;
+            (function(cs, ct, srcHsl, tgtHsl, cSrcOp, cTgtOp) {
+              _drawRibbon(p,
+                cs.y, cs.y + cs.h, cs.x + cs.w,
+                ct.y, ct.y + ct.h, ct.x,
+                function(t) {
+                  var midHsl = _lerpHsl(srcHsl, tgtHsl, t);
+                  var midRgb = _hslToRgb(midHsl[0], midHsl[1], midHsl[2]);
+                  var op = cSrcOp + (cTgtOp - cSrcOp) * t;
+                  return p.color(midRgb[0], midRgb[1], midRgb[2], op);
+                },
+                16
+              );
+            })(cs, ct, srcHsl, tgtHsl, cSrcOp, cTgtOp);
+          }
+        }
 
-            // Cross-stream: full brightness throughout, color blends
-            var cSrcBri = clActive ? (0.5 + cs.secondaryNorm * 0.5) : 0.06;
-            var cTgtBri = clActive ? (0.5 + ct.secondaryNorm * 0.5) : 0.06;
-            var cSteps = 12;
-
+        // ── Node circles (topmost layer) ──
+        for (var wi2 = 0; wi2 < lay.wordSlots.length; wi2++) {
+          var slot2 = lay.wordSlots[wi2];
+          for (var ni2 = 0; ni2 < slot2.nodes.length; ni2++) {
+            var nd2 = slot2.nodes[ni2];
+            if (!nd2.isReal) continue;
+            var isHov = propsRef.current.hoveredWord === slot2.word &&
+                        nd2.col !== undefined;
             p.noStroke();
-            for (var csi = 0; csi < cSteps; csi++) {
-              var ct0 = csi / cSteps, ct1 = (csi + 1) / cSteps;
-              var cMidT = (ct0 + ct1) / 2;
-
-              // Blend hue from source to target
-              var midHsl = _lerpHsl(srcHsl, tgtHsl, cMidT);
-              // Brightness stays high — interpolate between source and target brightness
-              var cBri = cSrcBri + (cTgtBri - cSrcBri) * cMidT;
-              var cRgb = _colorAtBrightness(midHsl, cBri);
-
-              var cx0 = p.bezierPoint(csR, csR + ccp, ctL - ccp, ctL, ct0);
-              var cy0t = p.bezierPoint(csT, csT, ctT, ctT, ct0);
-              var cx1 = p.bezierPoint(csR, csR + ccp, ctL - ccp, ctL, ct1);
-              var cy1t = p.bezierPoint(csT, csT, ctT, ctT, ct1);
-              var cy0b = p.bezierPoint(csB, csB, ctB, ctB, ct0);
-              var cy1b = p.bezierPoint(csB, csB, ctB, ctB, ct1);
-
-              p.fill(cRgb[0], cRgb[1], cRgb[2]);
-              p.beginShape();
-              p.vertex(cx0, cy0t);
-              p.vertex(cx1, cy1t);
-              p.vertex(cx1, cy1b);
-              p.vertex(cx0, cy0b);
-              p.endShape(p.CLOSE);
-            }
+            p.fill(p.color(255, 255, 255, isHov ? 1.0 : 0.75));
+            p.ellipse(nd2.x + nd2.w / 2, nd2.y + nd2.h / 2, isHov ? 10 : 7, isHov ? 10 : 7);
           }
         }
       };
 
-      // ── Mouse: hover ──
+      // ── Mouse: hover (circle hit detection) ──
       p.mouseMoved = function() {
         var lay = propsRef.current.layout;
         if (!lay) return;
@@ -291,27 +344,18 @@ function FibrasChart(props) {
           return;
         }
         var found = null;
-        for (var wi = 0; wi < lay.wordSlots.length; wi++) {
+        var HIT = 7;
+        outer: for (var wi = 0; wi < lay.wordSlots.length; wi++) {
           var slot = lay.wordSlots[wi];
           for (var ni = 0; ni < slot.nodes.length; ni++) {
             var nd = slot.nodes[ni];
             if (!nd.isReal) continue;
-            if (mx >= nd.x && mx <= nd.x + nd.w && my >= nd.y && my <= nd.y + nd.h) {
-              found = slot.word; break;
+            var cx = nd.x + nd.w / 2, cy = nd.y + nd.h / 2;
+            var dx = mx - cx, dy = my - cy;
+            if (dx * dx + dy * dy < HIT * HIT) {
+              found = slot.word; break outer;
             }
           }
-          if (found) break;
-          for (var li = 0; li < slot.links.length; li++) {
-            var lk = slot.links[li];
-            var lxMin = lk.srcNode.x + lk.srcNode.w;
-            var lxMax = lk.tgtNode.x;
-            var lyMin = Math.min(lk.srcNode.y, lk.tgtNode.y);
-            var lyMax = Math.max(lk.srcNode.y + lk.srcNode.h, lk.tgtNode.y + lk.tgtNode.h);
-            if (mx >= lxMin && mx <= lxMax && my >= lyMin && my <= lyMax) {
-              found = slot.word; break;
-            }
-          }
-          if (found) break;
         }
         if (found !== propsRef.current.hoveredWord) {
           propsRef.current.setHoveredWord(found);
@@ -324,25 +368,17 @@ function FibrasChart(props) {
         if (!lay) return;
         var mx = p.mouseX, my = p.mouseY;
         if (mx < 0 || mx > lay.canvasW || my < 0 || my > lay.canvasH) return;
-        for (var wi = 0; wi < lay.wordSlots.length; wi++) {
+        var HIT = 7;
+        outer: for (var wi = 0; wi < lay.wordSlots.length; wi++) {
           var slot = lay.wordSlots[wi];
           for (var ni = 0; ni < slot.nodes.length; ni++) {
             var nd = slot.nodes[ni];
             if (!nd.isReal) continue;
-            if (mx >= nd.x && mx <= nd.x + nd.w && my >= nd.y && my <= nd.y + nd.h) {
+            var cx = nd.x + nd.w / 2, cy = nd.y + nd.h / 2;
+            var dx = mx - cx, dy = my - cy;
+            if (dx * dx + dy * dy < HIT * HIT) {
               if (propsRef.current.toggleLocked) propsRef.current.toggleLocked(slot.word);
-              return;
-            }
-          }
-          for (var li = 0; li < slot.links.length; li++) {
-            var lk = slot.links[li];
-            var lxMin = lk.srcNode.x + lk.srcNode.w;
-            var lxMax = lk.tgtNode.x;
-            var lyMin = Math.min(lk.srcNode.y, lk.tgtNode.y);
-            var lyMax = Math.max(lk.srcNode.y + lk.srcNode.h, lk.tgtNode.y + lk.tgtNode.h);
-            if (mx >= lxMin && mx <= lxMax && my >= lyMin && my <= lyMax) {
-              if (propsRef.current.toggleLocked) propsRef.current.toggleLocked(slot.word);
-              return;
+              break outer;
             }
           }
         }
