@@ -328,8 +328,8 @@ function FibrasChart(props) {
             var isHov = propsRef.current.hoveredWord === slot2.word &&
                         nd2.col !== undefined;
             p.noStroke();
-            p.fill(p.color(255, 255, 255, isHov ? 1.0 : 0.75));
-            p.ellipse(nd2.x + nd2.w / 2, nd2.y + nd2.h / 2, isHov ? 10 : 7, isHov ? 10 : 7);
+            p.fill(p.color(255, 255, 255, isHov ? 1.0 : 0.5));
+            p.ellipse(nd2.x + nd2.w / 2, nd2.y + nd2.h / 2, isHov ? 10 : 5, isHov ? 10 : 5);
           }
         }
       };
