@@ -405,9 +405,9 @@ function FibrasChart(props) {
           }
         }
 
-        // Elsewhere → clear all pins
-        if (propsRef.current.clearLocked) propsRef.current.clearLocked();
+        // Elsewhere → clear all pins and locks
         if (propsRef.current.clearAllPins) propsRef.current.clearAllPins();
+        if (propsRef.current.clearLocked) propsRef.current.clearLocked();
         pinnedTooltipRef.current = null; setPinnedTooltip(null);
         p.redraw();
       };
@@ -467,6 +467,7 @@ function FibrasChart(props) {
   return React.createElement("div", { style: { position: "relative" } },
     React.createElement("div", {
       ref: containerRef,
+      onClick: function(ev) { ev.stopPropagation(); },
       style: { background: T.bg, borderRadius: T.radius6, border: "1px solid " + T.border, overflow: "hidden" }
     }),
     buildTipEl(tooltipData, false),
@@ -747,7 +748,6 @@ function FibrasDocStack(props) {
     setEmPinned(null);
     setSegPinned(null);
     setSegTooltip(null);
-    if (clearLocked) clearLocked();
   }
 
   clearAllPinsRef.current = clearAllPins;
