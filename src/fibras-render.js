@@ -402,7 +402,7 @@ function FibrasChart(props) {
         }
 
         // Check ribbon edges
-        outer2: for (var wi2 = 0; wi2 < lay.wordSlots.length; wi2++) {
+        for (var wi2 = 0; wi2 < lay.wordSlots.length; wi2++) {
           var slot2 = lay.wordSlots[wi2];
           for (var li = 0; li < slot2.links.length; li++) {
             var lk = slot2.links[li];
@@ -412,7 +412,7 @@ function FibrasChart(props) {
             var lyMax = Math.max(lk.srcNode.y + lk.srcNode.h, lk.tgtNode.y + lk.tgtNode.h);
             if (mx >= lxMin && mx <= lxMax && my >= lyMin && my <= lyMax) {
               if (propsRef.current.toggleLocked) propsRef.current.toggleLocked(slot2.word);
-              break outer2;
+              return;
             }
           }
         }
