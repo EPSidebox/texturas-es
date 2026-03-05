@@ -320,7 +320,7 @@ function analyzeStage2(stage1, eng, topN, wnDepth, decay, flow) {
     enriched.push({
       surface: tok.surface, lemma: tok.lemma, pos: tok.pos, stop: tok.stop,
       rel: relevanceMap[tok.lemma] || 0, freq: freqMap[tok.lemma] || 0,
-      polarity: polarity, arousal: sent.vad ? sent.vad.a : null,
+      polarity: polarity, arousal: sent.vad ? (sent.vad.a - 0.5) * 2 : null,
       emolex: sent.emolex || null,
       comm: stage1.commMap[tok.lemma] !== undefined ? stage1.commMap[tok.lemma] : -1
     });
