@@ -161,14 +161,15 @@ function FibrasChart(props) {
       p.draw = function() {
         var lay = propsRef.current.layout;
         var hWord = propsRef.current.hoveredWord;
+        var hoveredStream = propsRef.current.hoveredStream;
         var locked = propsRef.current.lockedWords;
         if (!lay) return;
 
-        var hasHL = !!(hWord || (locked && locked.size > 0));
+        var hasHL = !!(hoveredStream || (locked && locked.size > 0));
 
         function isWordActive(w) {
           if (!hasHL) return true;
-          if (w === hWord) return true;
+          if (w === hoveredStream) return true;
           if (locked && locked.has(w)) return true;
           if (propsRef.current.seeds && propsRef.current.seeds.has(w)) return true;
           return false;
@@ -320,12 +321,17 @@ function FibrasChart(props) {
           for (var ni2 = 0; ni2 < slot2.nodes.length; ni2++) {
             var nd2 = slot2.nodes[ni2];
             if (!nd2.isReal) continue;
-            var isHov = propsRef.current.hoveredWord === slot2.word;
+            var isThisNodeHovered = propsRef.current.hoveredNode &&
+              propsRef.current.hoveredNode.wi === wi2 &&
+              propsRef.current.hoveredNode.ni === ni2;
+            var isThisNodePinned = propsRef.current.pinnedTooltip &&
+              propsRef.current.pinnedTooltip.wi === wi2 &&
+              propsRef.current.pinnedTooltip.ni === ni2;
             var isLocked = propsRef.current.lockedWords && propsRef.current.lockedWords.has(slot2.word);
             p.noStroke();
-            p.fill(p.color(255, 255, 255, isHov || isLocked ? 1.0 : 0.5));
-            p.ellipse(nd2.x + nd2.w / 2, nd2.y + nd2.h / 2, isHov || isLocked ? 10 : 5, isHov || isLocked ? 10 : 5);
-            if (isLocked) {
+            p.fill(p.color(255, 255, 255, isThisNodeHovered || isThisNodePinned || isLocked ? 1.0 : 0.5));
+            p.ellipse(nd2.x + nd2.w / 2, nd2.y + nd2.h / 2, isThisNodeHovered || isThisNodePinned ? 10 : 5, isThisNodeHovered || isThisNodePinned ? 10 : 5);
+            if (isThisNodePinned) {
               p.noFill();
               p.stroke(p.color(accentRgb[0], accentRgb[1], accentRgb[2], 1.0));
               p.strokeWeight(1);
@@ -431,7 +437,7 @@ function FibrasChart(props) {
 
   useEffect(function() {
     if (p5Ref.current) p5Ref.current.redraw();
-  }, [props.hoveredWord, props.lockedWords, props.seeds, props.enabledEmos, props.pinnedTooltip]);
+  }, [props.hoveredNode, props.hoveredStream, props.lockedWords, props.seeds, props.enabledEmos, props.pinnedTooltip]);
 
   function buildTipEl(data, pinned) {
     if (!data) return null;
@@ -764,6 +770,8 @@ function FibrasDocStack(props) {
 
   var _ws = useState(0); var winStart = _ws[0], setWinStart = _ws[1];
   var _hw = useState(null); var hoveredWord = _hw[0], setHoveredWord = _hw[1];
+  var _hn = useState(null); var hoveredNode = _hn[0], setHoveredNode = _hn[1];
+  var _hs = useState(null); var hoveredStream = _hs[0], setHoveredStream = _hs[1];
   var _td = useState(null); var tooltipData = _td[0], setTooltipData = _td[1];
   var _pt = useState(null); var pinnedTooltip = _pt[0], setPinnedTooltip = _pt[1];
   var _segTip = useState(null); var segTooltip = _segTip[0], setSegTooltip = _segTip[1];
@@ -851,6 +859,8 @@ function FibrasDocStack(props) {
     React.createElement(FibrasChart, {
       layout: layout, seeds: seeds,
       hoveredWord: hoveredWord, setHoveredWord: setHoveredWord,
+      hoveredNode: hoveredNode, setHoveredNode: setHoveredNode,
+      hoveredStream: hoveredStream, setHoveredStream: setHoveredStream,
       lockedWords: lockedWords, toggleLocked: toggleLocked,
       clearLocked: clearLocked,
       enabledEmos: enabledEmos,
