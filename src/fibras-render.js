@@ -426,7 +426,7 @@ function FibrasMinimap(props) {
 
   var maxArousal = 0;
   for (var ai = 0; ai < segArousal.length; ai++) {
-    if (segArousal[ai] > maxArousal) maxArousal = segArousal[ai];
+    if (Math.abs(segArousal[ai]) > maxArousal) maxArousal = Math.abs(segArousal[ai]);
   }
   if (maxArousal === 0) maxArousal = 1;
 
@@ -445,7 +445,7 @@ function FibrasMinimap(props) {
   for (var api = 0; api < segArousal.length; api++) {
     arousalPts.push({
       x: (api + 0.5) * segW,
-      y: barH - 3 - ((segArousal[api] / maxArousal) * (barH - 6))
+      y: (barH / 2) - ((segArousal[api] / maxArousal) * (barH / 2 - 3))
     });
   }
 
