@@ -77,7 +77,7 @@ function _lerpHsl(hsl1, hsl2, t) {
 // Polarity to rgb (for minimap)
 var _polPositive = _hexToRgb(T.positive);
 var _polNegative = _hexToRgb(T.negative);
-var _polNeutral = _hexToRgb(T.neutral);
+var _polNeutral  = _hexToRgb(T.neutral);
 
 function _lerpColor(c1, c2, t) {
   return [
@@ -93,16 +93,11 @@ function _polarityToRgb(pol) {
   return _polNeutral;
 }
 
-// ── Ribbon drawing (shared by regular links and cross-stream links) ──
-// sT/sB: source top/bottom y
-// sR: source right x
-// tT/tB: target top/bottom y
-// tL: target left x
-// getColor(t): function returning p5 color string at interpolation t
-// p: p5 instance
+// ── Ribbon drawing ──
+// Independent control points per edge based on vertical travel distance.
+// Quad sorting prevents self-intersecting shapes.
 function _drawRibbon(p, sT, sB, sR, tT, tB, tL, getColor, steps) {
   var baseCp = (tL - sR) / 3;
-  // Independent control points per edge based on vertical travel distance
   var cpT = baseCp + Math.abs(tT - sT) * 0.4;
   var cpB = baseCp + Math.abs(tB - sB) * 0.4;
 
@@ -196,9 +191,8 @@ function FibrasChart(props) {
             var src = slot.nodes[ci];
             var tgt = slot.nodes[ci + 1];
 
-            // Fade out: src is real, tgt is ghost
+            // Fade out: src real, tgt ghost
             if (src.isReal && !tgt.isReal) {
-              // Suppress fade-out if this node is a cross-stream source
               var isCrossSrc = false;
               for (var xci = 0; xci < lay.crossLinks.length; xci++) {
                 if (lay.crossLinks[xci].srcSlotIdx === wi && lay.crossLinks[xci].srcCol === ci) {
@@ -224,9 +218,8 @@ function FibrasChart(props) {
               continue;
             }
 
-            // Fade in: src is ghost, tgt is real
+            // Fade in: src ghost, tgt real
             if (!src.isReal && tgt.isReal) {
-              // Suppress fade-in if this node is a cross-stream target
               var isCrossTgt = false;
               for (var xcj = 0; xcj < lay.crossLinks.length; xcj++) {
                 if (lay.crossLinks[xcj].tgtSlotIdx === wi && lay.crossLinks[xcj].tgtCol === ci + 1) {
@@ -325,8 +318,7 @@ function FibrasChart(props) {
           for (var ni2 = 0; ni2 < slot2.nodes.length; ni2++) {
             var nd2 = slot2.nodes[ni2];
             if (!nd2.isReal) continue;
-            var isHov = propsRef.current.hoveredWord === slot2.word &&
-                        nd2.col !== undefined;
+            var isHov = propsRef.current.hoveredWord === slot2.word;
             p.noStroke();
             p.fill(p.color(255, 255, 255, isHov ? 1.0 : 0.5));
             p.ellipse(nd2.x + nd2.w / 2, nd2.y + nd2.h / 2, isHov ? 10 : 5, isHov ? 10 : 5);
@@ -411,19 +403,20 @@ function FibrasChart(props) {
 // FibrasMinimap
 // ════════════════════════════════════════════
 function FibrasMinimap(props) {
-  var numSegs = props.numSegs;
-  var winStart = props.winStart;
-  var winSize = props.winSize;
+  var numSegs    = props.numSegs;
+  var winStart   = props.winStart;
+  var winSize    = props.winSize;
   var setWinStart = props.setWinStart;
   var chartWidth = props.chartWidth || 700;
   var segPolarity = props.segPolarity || [];
-  var segArousal = props.segArousal || [];
+  var segArousal  = props.segArousal  || [];
 
   var maxStart = Math.max(0, numSegs - winSize);
-  var showNav = numSegs > winSize;
-  var barH = 28;
-  var segW = chartWidth / numSegs;
+  var showNav  = numSegs > winSize;
+  var barH     = 28;
+  var segW     = chartWidth / numSegs;
 
+  // Max absolute arousal (remapped -1 to +1)
   var maxArousal = 0;
   for (var ai = 0; ai < segArousal.length; ai++) {
     if (Math.abs(segArousal[ai]) > maxArousal) maxArousal = Math.abs(segArousal[ai]);
@@ -441,13 +434,13 @@ function FibrasMinimap(props) {
     setWinStart(ns);
   }
 
-  var arousalPts = [];
-  for (var api = 0; api < segArousal.length; api++) {
-    arousalPts.push({
-      x: (api + 0.5) * segW,
-      y: (barH / 2) - ((segArousal[api] / maxArousal) * (barH / 2 - 3))
-    });
-  }
+  // Arousal dashes: one horizontal line per segment
+  var midY = barH / 2;
+  var arousalDashes = segArousal.map(function(val, i) {
+    var norm = val / maxArousal;
+    var y = midY - norm * (midY - 3);
+    return { x1: i * segW + 2, x2: (i + 1) * segW - 2, y: y };
+  });
 
   return React.createElement("div", {
     style: { display: "flex", alignItems: "center", gap: T.gap6 }
@@ -474,6 +467,7 @@ function FibrasMinimap(props) {
         cursor: "pointer", overflow: "hidden", flexShrink: 0
       }
     },
+      // Polarity background bands
       segPolarity.map(function(pol, i) {
         var rgb = _polarityToRgb(pol);
         return React.createElement("div", {
@@ -486,21 +480,38 @@ function FibrasMinimap(props) {
           }
         });
       }),
-      arousalPts.length > 1 && React.createElement("svg", {
-        style: { position: "absolute", top: 0, left: 0, width: chartWidth, height: barH, pointerEvents: "none" }
+
+      // SVG: zero guideline + arousal dashes
+      React.createElement("svg", {
+        style: {
+          position: "absolute", top: 0, left: 0,
+          width: chartWidth, height: barH, pointerEvents: "none"
+        }
       },
-        React.createElement("polyline", {
-          points: arousalPts.map(function(pt) { return pt.x + "," + pt.y; }).join(" "),
-          fill: "none", stroke: "white", strokeWidth: 1.5,
-          strokeLinejoin: "round", opacity: 0.8
+        // Zero line
+        React.createElement("line", {
+          x1: 0, x2: chartWidth, y1: midY, y2: midY,
+          stroke: "rgba(255,255,255,0.25)",
+          strokeWidth: 1, strokeDasharray: "3,3"
+        }),
+        // Per-segment arousal dashes
+        arousalDashes.map(function(d, i) {
+          return React.createElement("line", {
+            key: i,
+            x1: d.x1, x2: d.x2, y1: d.y, y2: d.y,
+            stroke: "white", strokeWidth: 1.5, opacity: 0.8
+          });
         })
       ),
+
+      // Navigation overlay
       showNav && React.createElement("div", {
         style: {
           position: "absolute", left: navX, top: 0,
-          width: navW, height: barH,
+          width: navW, height: barH - 2,
           border: "2px solid " + T.accent, borderRadius: T.radius3,
-          background: T.accent + "15", pointerEvents: "none"
+          background: T.accent + "15", pointerEvents: "none",
+          boxSizing: "border-box"
         }
       })
     ),
@@ -525,13 +536,13 @@ function FibrasMinimap(props) {
 // FibrasEmoBars
 // ════════════════════════════════════════════
 function FibrasEmoBars(props) {
-  var layout = props.layout;
+  var layout      = props.layout;
   var enabledEmos = props.enabledEmos;
   if (!layout || !layout.emoBars || layout.emoBars.length === 0) return null;
 
   var emoKeys = ["joy", "fear", "sadness", "anger"];
-  var barH = layout.emoBarH - 8;
-  var barW = Math.max(2, layout.nodeW * 0.6);
+  var barH    = layout.emoBarH - 8;
+  var barW    = Math.max(2, layout.nodeW * 0.3);
 
   var maxEmo = 0;
   for (var i = 0; i < layout.emoBars.length; i++) {
@@ -571,18 +582,18 @@ function FibrasEmoBars(props) {
 // FibrasDocStack
 // ════════════════════════════════════════════
 function FibrasDocStack(props) {
-  var fibras = props.fibras;
-  var seeds = props.seeds;
-  var enabledEmos = props.enabledEmos;
-  var sortMode = props.sortMode;
-  var colorMode = props.colorMode;
-  var lockedWords = props.lockedWords;
+  var fibras       = props.fibras;
+  var seeds        = props.seeds;
+  var enabledEmos  = props.enabledEmos;
+  var sortMode     = props.sortMode;
+  var colorMode    = props.colorMode;
+  var lockedWords  = props.lockedWords;
   var toggleLocked = props.toggleLocked;
-  var commMap = props.commMap;
-  var canvasW = props.canvasW || 800;
-  var canvasH = props.canvasH || 500;
-  var engProp = props.eng;
-  var winSize = 10;
+  var commMap      = props.commMap;
+  var canvasW      = props.canvasW || 800;
+  var canvasH      = props.canvasH || 500;
+  var engProp      = props.eng;
+  var winSize      = 10;
 
   var _ws = useState(0);
   var winStart = _ws[0], setWinStart = _ws[1];
@@ -636,7 +647,7 @@ function FibrasDocStack(props) {
         setWinStart: setWinStart,
         chartWidth: chartAreaW + 66 + 14,
         segPolarity: layout ? layout.segPolarity : [],
-        segArousal: layout ? layout.segArousal : []
+        segArousal:  layout ? layout.segArousal  : []
       })
     ),
 
@@ -645,7 +656,7 @@ function FibrasDocStack(props) {
       layout: layout, enabledEmos: enabledEmos
     }),
 
-    // Segment labels (only source)
+    // Segment labels
     segLabels.length > 0 && React.createElement("div", {
       style: { position: "relative", height: 14, width: canvasW, marginBottom: 2 }
     },
@@ -664,7 +675,7 @@ function FibrasDocStack(props) {
             position: "absolute", left: sl.x, top: 0,
             transform: "translateX(-50%)",
             fontSize: 9, fontFamily: T.fontMono,
-            color: sl.label ? T.textMid : T.textDim,
+            color: "#ffffff", fontWeight: "bold",
             cursor: sl.label ? "pointer" : "default"
           }
         }, txt);
@@ -705,20 +716,20 @@ function FibrasDocStack(props) {
 // FibrasMultiDoc
 // ════════════════════════════════════════════
 function FibrasMultiDoc(props) {
-  var selectedArr = props.selectedArr || [];
+  var selectedArr  = props.selectedArr  || [];
   var fibrasDataMap = props.fibrasDataMap || {};
-  var seeds = props.seedArr;
-  var enabledEmos = props.enabledEmos;
-  var docs = props.docs || [];
-  var compareMode = props.compareMode;
-  var sortMode = props.sortMode;
-  var colorMode = props.colorMode;
-  var lockedWords = props.lockedWords;
+  var seeds        = props.seedArr;
+  var enabledEmos  = props.enabledEmos;
+  var docs         = props.docs || [];
+  var compareMode  = props.compareMode;
+  var sortMode     = props.sortMode;
+  var colorMode    = props.colorMode;
+  var lockedWords  = props.lockedWords;
   var toggleLocked = props.toggleLocked;
   var commMapByDoc = props.commMapByDoc || {};
-  var canvasW = props.canvasW || 800;
-  var canvasH = props.canvasH || 500;
-  var engProp = props.eng;
+  var canvasW      = props.canvasW || 800;
+  var canvasH      = props.canvasH || 500;
+  var engProp      = props.eng;
 
   if (selectedArr.length === 0) {
     return React.createElement("div", {
