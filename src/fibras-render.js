@@ -132,22 +132,25 @@ function FibrasChart(props) {
   var propsRef     = useRef(props);
   propsRef.current = props;
 
-  // ── All interactive state lives HERE, inside FibrasChart ──
-  // This keeps hover fast — no prop chain, no React re-render on every mouse move.
-
-  // hoveredStream: word whose stream is highlighted (ribbon hover)
   var _hs = useState(null); var hoveredStream = _hs[0], setHoveredStream = _hs[1];
-  // hoveredNode: {wi, ni} — the single node being hovered
   var _hn = useState(null); var hoveredNode = _hn[0], setHoveredNode = _hn[1];
-  // tooltipData: transient tooltip shown on node hover
   var _tt = useState(null); var tooltipData = _tt[0], setTooltipData = _tt[1];
-  // pinnedTooltip: persistent tooltip shown on node click
   var _pt = useState(null); var pinnedTooltip = _pt[0], setPinnedTooltip = _pt[1];
 
-  // Refs so P5 sketch can read/write state without closure staleness
   var hoveredStreamRef = useRef(null);
   var hoveredNodeRef   = useRef(null);
   var pinnedTooltipRef = useRef(null);
+
+  // Expose clearAllPins to parent via prop callback
+  useEffect(function() {
+    if (props.onRegisterClear) {
+      props.onRegisterClear(function() {
+        pinnedTooltipRef.current = null;
+        setPinnedTooltip(null);
+        if (p5Ref.current) p5Ref.current.redraw();
+      });
+    }
+  }, [props.onRegisterClear]);
 
   useEffect(function() {
     if (!containerRef.current || !propsRef.current.layout) return;
@@ -173,7 +176,6 @@ function FibrasChart(props) {
         var hn = hoveredNodeRef.current;
         var pt = pinnedTooltipRef.current;
 
-        // Stream is highlighted if: ribbon hover OR locked
         var hasHL = !!(hs || (locked && locked.size > 0));
 
         function isWordActive(w) {
@@ -186,20 +188,17 @@ function FibrasChart(props) {
 
         p.background(17);
 
-        // Guidelines
         p.stroke(255, 255, 255, 0.20); p.strokeWeight(1);
         for (var gi = 0; gi < lay.columns.length; gi++) {
           p.line(lay.columns[gi].x, 0, lay.columns[gi].x, lay.canvasH);
         }
         p.noStroke();
 
-        // ── Streams: back-to-front ──
         for (var wi = lay.wordSlots.length - 1; wi >= 0; wi--) {
           var slot = lay.wordSlots[wi];
           var rgb  = _hexToRgb(slot.color);
           var active = isWordActive(slot.word);
 
-          // Ribbons
           for (var ci = 0; ci < lay.numCols - 1; ci++) {
             var src = slot.nodes[ci];
             var tgt = slot.nodes[ci + 1];
@@ -247,7 +246,6 @@ function FibrasChart(props) {
             })(src, tgt, rgb, active);
           }
 
-          // Nodes
           for (var ni = 0; ni < slot.nodes.length; ni++) {
             var nd = slot.nodes[ni];
             if (!nd.isReal) continue;
@@ -257,7 +255,6 @@ function FibrasChart(props) {
             p.rect(nd.x, nd.y, nd.w, nd.h);
           }
 
-          // Labels
           if (active || !hasHL) {
             p.textSize(9); p.textAlign(p.RIGHT, p.CENTER);
             p.fill(p.color(180, 180, 180, active ? 0.85 : 0.15));
@@ -269,7 +266,6 @@ function FibrasChart(props) {
           }
         }
 
-        // Cross-stream links
         if (lay.crossLinks) {
           for (var cli = 0; cli < lay.crossLinks.length; cli++) {
             var cl = lay.crossLinks[cli];
@@ -289,7 +285,6 @@ function FibrasChart(props) {
           }
         }
 
-        // Node circles
         var accentRgb = _hexToRgb(T.accent);
         for (var wi2 = 0; wi2 < lay.wordSlots.length; wi2++) {
           var slot2 = lay.wordSlots[wi2];
@@ -314,7 +309,6 @@ function FibrasChart(props) {
         }
       };
 
-      // ── Mouse: hover ──
       p.mouseMoved = function() {
         var lay = propsRef.current.layout;
         if (!lay) return;
@@ -327,7 +321,6 @@ function FibrasChart(props) {
         }
         var HIT = 7;
 
-        // Node circles
         for (var wi = 0; wi < lay.wordSlots.length; wi++) {
           var slot = lay.wordSlots[wi];
           for (var ni = 0; ni < slot.nodes.length; ni++) {
@@ -347,7 +340,6 @@ function FibrasChart(props) {
           }
         }
 
-        // Ribbons
         for (var wi2 = 0; wi2 < lay.wordSlots.length; wi2++) {
           var slot2 = lay.wordSlots[wi2];
           for (var li = 0; li < slot2.links.length; li++) {
@@ -364,14 +356,12 @@ function FibrasChart(props) {
           }
         }
 
-        // Nothing hit
         hoveredStreamRef.current = null; setHoveredStream(null);
         hoveredNodeRef.current   = null; setHoveredNode(null);
         setTooltipData(null);
         p.redraw();
       };
 
-      // ── Mouse: click ──
       p.mousePressed = function() {
         var lay = propsRef.current.layout;
         if (!lay) return;
@@ -379,7 +369,6 @@ function FibrasChart(props) {
         if (mx < 0 || mx > lay.canvasW || my < 0 || my > lay.canvasH) return;
         var HIT = 7;
 
-        // Node circles → pin/unpin tooltip
         for (var wi = 0; wi < lay.wordSlots.length; wi++) {
           var slot = lay.wordSlots[wi];
           for (var ni = 0; ni < slot.nodes.length; ni++) {
@@ -402,7 +391,6 @@ function FibrasChart(props) {
           }
         }
 
-        // Ribbons → lock/unlock stream
         for (var wi2 = 0; wi2 < lay.wordSlots.length; wi2++) {
           var slot2 = lay.wordSlots[wi2];
           for (var li = 0; li < slot2.links.length; li++) {
@@ -417,8 +405,9 @@ function FibrasChart(props) {
           }
         }
 
-        // Elsewhere → clear Sankey state only
+        // Elsewhere → clear all pins
         if (propsRef.current.clearLocked) propsRef.current.clearLocked();
+        if (propsRef.current.clearAllPins) propsRef.current.clearAllPins();
         pinnedTooltipRef.current = null; setPinnedTooltip(null);
         p.redraw();
       };
@@ -430,12 +419,10 @@ function FibrasChart(props) {
     };
   }, [props.layout]);
 
-  // Only redraw on external state changes (locks, seeds, emos)
   useEffect(function() {
     if (p5Ref.current) p5Ref.current.redraw();
   }, [props.lockedWords, props.seeds, props.enabledEmos]);
 
-  // Build tooltip element
   function buildTipEl(data, pinned) {
     if (!data) return null;
     var nd = data.nd;
@@ -498,9 +485,11 @@ function FibrasMinimap(props) {
   var chartWidth  = props.chartWidth || 700;
   var segPolarity = props.segPolarity || [];
   var segArousal  = props.segArousal  || [];
+  // pinnedSeg lifted to FibrasDocStack
+  var pinnedSeg    = props.pinnedSeg;
+  var setPinnedSeg = props.setPinnedSeg;
 
   var _tt = useState(null); var tipData = _tt[0], setTipData = _tt[1];
-  var _tp = useState(null); var pinnedSeg = _tp[0], setPinnedSeg = _tp[1];
 
   var maxStart = Math.max(0, numSegs - winSize);
   var showNav  = numSegs > winSize;
@@ -530,6 +519,7 @@ function FibrasMinimap(props) {
   }
 
   function handleClick(ev) {
+    ev.stopPropagation();
     var rect = ev.currentTarget.getBoundingClientRect();
     var x = ev.clientX - rect.left;
     var seg = Math.floor((x / chartWidth) * numSegs);
@@ -571,7 +561,7 @@ function FibrasMinimap(props) {
 
   return React.createElement("div", { style: { display: "flex", alignItems: "center", gap: T.gap6 } },
     React.createElement("button", {
-      onClick: function() { if (showNav) setWinStart(Math.max(0, winStart - 1)); },
+      onClick: function(ev) { ev.stopPropagation(); if (showNav) setWinStart(Math.max(0, winStart - 1)); },
       disabled: !showNav || winStart <= 0,
       style: {
         background: "transparent", border: "1px solid " + (showNav ? T.borderLight : "transparent"),
@@ -625,7 +615,7 @@ function FibrasMinimap(props) {
     ),
 
     React.createElement("button", {
-      onClick: function() { if (showNav) setWinStart(Math.min(maxStart, winStart + 1)); },
+      onClick: function(ev) { ev.stopPropagation(); if (showNav) setWinStart(Math.min(maxStart, winStart + 1)); },
       disabled: !showNav || winStart >= maxStart,
       style: {
         background: "transparent", border: "1px solid " + (showNav ? T.borderLight : "transparent"),
@@ -648,8 +638,11 @@ function FibrasEmoBars(props) {
   var enabledEmos = props.enabledEmos;
   if (!layout || !layout.emoBars || layout.emoBars.length === 0) return null;
 
+  // pinnedSeg lifted to FibrasDocStack
+  var pinnedSeg    = props.pinnedSeg;
+  var setPinnedSeg = props.setPinnedSeg;
+
   var _tt = useState(null); var tipData = _tt[0], setTipData = _tt[1];
-  var _tp = useState(null); var pinnedSeg = _tp[0], setPinnedSeg = _tp[1];
 
   var emoKeys = ["joy", "fear", "sadness", "anger"];
   var barH    = layout.emoBarH - 8;
@@ -703,6 +696,7 @@ function FibrasEmoBars(props) {
         },
         onMouseLeave: function() { if (pinnedSeg === null) setTipData(null); },
         onClick: function(ev) {
+          ev.stopPropagation();
           if (pinnedSeg === ebi) { setPinnedSeg(null); setTipData(null); }
           else { setPinnedSeg(ebi); setTipData({ seg: ebi, x: ev.clientX, y: ev.clientY }); }
         }
@@ -739,9 +733,24 @@ function FibrasDocStack(props) {
   var engProp      = props.eng;
   var winSize      = 10;
 
-  var _ws = useState(0); var winStart = _ws[0], setWinStart = _ws[1];
+  var _ws  = useState(0);    var winStart  = _ws[0],  setWinStart  = _ws[1];
+  var _mmp = useState(null); var mmPinned  = _mmp[0], setMmPinned  = _mmp[1];
+  var _emp = useState(null); var emPinned  = _emp[0], setEmPinned  = _emp[1];
   var _segTip = useState(null); var segTooltip = _segTip[0], setSegTooltip = _segTip[1];
   var _segPin = useState(null); var segPinned  = _segPin[0], setSegPinned  = _segPin[1];
+
+  // Ref so the P5 canvas can call clearAllPins without closure staleness
+  var clearAllPinsRef = useRef(null);
+
+  function clearAllPins() {
+    setMmPinned(null);
+    setEmPinned(null);
+    setSegPinned(null);
+    setSegTooltip(null);
+    if (clearLocked) clearLocked();
+  }
+
+  clearAllPinsRef.current = clearAllPins;
 
   useEffect(function() {
     if (!fibras) return;
@@ -766,7 +775,8 @@ function FibrasDocStack(props) {
   var activeTip = segPinned || segTooltip;
 
   return React.createElement("div", {
-    style: { display: "flex", flexDirection: "column", gap: T.gap4, position: "relative" }
+    style: { display: "flex", flexDirection: "column", gap: T.gap4, position: "relative" },
+    onClick: function() { clearAllPinsRef.current(); }
   },
     props.docLabel && React.createElement("div", {
       style: { fontSize: T.fs10, color: T.textMid, fontFamily: T.fontMono }
@@ -777,11 +787,15 @@ function FibrasDocStack(props) {
         numSegs: fibras.numSegs, winStart: winStart, winSize: winSize,
         setWinStart: setWinStart, chartWidth: chartAreaW + 66 + 14,
         segPolarity: layout ? layout.segPolarity : [],
-        segArousal:  layout ? layout.segArousal  : []
+        segArousal:  layout ? layout.segArousal  : [],
+        pinnedSeg: mmPinned, setPinnedSeg: setMmPinned
       })
     ),
 
-    layout && React.createElement(FibrasEmoBars, { layout: layout, enabledEmos: enabledEmos }),
+    layout && React.createElement(FibrasEmoBars, {
+      layout: layout, enabledEmos: enabledEmos,
+      pinnedSeg: emPinned, setPinnedSeg: setEmPinned
+    }),
 
     segLabels.length > 0 && React.createElement("div", {
       style: { position: "relative", height: 14, width: canvasW, marginBottom: 2 }
@@ -792,7 +806,8 @@ function FibrasDocStack(props) {
           key: sli,
           onMouseEnter: function() { if (sl.label && !segPinned) setSegTooltip(sl); },
           onMouseLeave: function() { if (!segPinned) setSegTooltip(null); },
-          onClick: function() {
+          onClick: function(ev) {
+            ev.stopPropagation();
             if (!sl.label) return;
             if (segPinned && segPinned.segIdx === sl.segIdx) setSegPinned(null);
             else setSegPinned(sl);
@@ -821,7 +836,8 @@ function FibrasDocStack(props) {
 
     React.createElement(FibrasChart, {
       layout: layout, seeds: seeds,
-      lockedWords: lockedWords, toggleLocked: toggleLocked, clearLocked: clearLocked,
+      lockedWords: lockedWords, toggleLocked: toggleLocked,
+      clearLocked: clearLocked, clearAllPins: clearAllPins,
       enabledEmos: enabledEmos
     })
   );
