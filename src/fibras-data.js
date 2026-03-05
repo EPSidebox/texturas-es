@@ -342,11 +342,17 @@ function computeSegData(segments, nodeWords, eng, decay, relevanceMap, ngMode) {
       var localNormAct = normFreq + normBoost;
       var globalRel = (ngMode === 1 && relevanceMap && relevanceMap[w]) ? relevanceMap[w] : 1;
 
+var provenance = null;
+      if (baseFreq > 0) provenance = "directo";
+      else if (boost > 0) provenance = "vectorial";
+      else if (localAct > 0) provenance = "semantico";
+
       row[w] = {
         freq: localAct,
         normFreq: localNormAct,
         rel: globalRel * (localAct > 0 ? localNormAct : 0),
-        act: localAct
+        act: localAct,
+        provenance: provenance
       };
     }
     result.push(row);
@@ -655,7 +661,8 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
         primary: primaryVal,
         secondary: secondaryVal,
         primaryNorm: primaryNorm,
-        secondaryNorm: secondaryNorm
+        secondaryNorm: secondaryNorm,
+        provenance: segEntry ? segEntry.provenance : null
       });
     }
 
