@@ -490,7 +490,8 @@ function FibrasMinimap(props) {
   var pinnedSeg    = props.pinnedSeg;
   var setPinnedSeg = props.setPinnedSeg;
 
-  var _tt = useState(null); var tipData = _tt[0], setTipData = _tt[1];
+  var tipData    = props.tipData;
+  var setTipData = props.setTipData;
 
   var maxStart = Math.max(0, numSegs - winSize);
   var showNav  = numSegs > winSize;
@@ -639,11 +640,10 @@ function FibrasEmoBars(props) {
   var enabledEmos = props.enabledEmos;
   if (!layout || !layout.emoBars || layout.emoBars.length === 0) return null;
 
-  // pinnedSeg lifted to FibrasDocStack
   var pinnedSeg    = props.pinnedSeg;
   var setPinnedSeg = props.setPinnedSeg;
-
-  var _tt = useState(null); var tipData = _tt[0], setTipData = _tt[1];
+  var tipData      = props.tipData;
+  var setTipData   = props.setTipData;
 
   var emoKeys = ["joy", "fear", "sadness", "anger"];
   var barH    = layout.emoBarH - 8;
@@ -736,7 +736,9 @@ function FibrasDocStack(props) {
 
   var _ws  = useState(0);    var winStart  = _ws[0],  setWinStart  = _ws[1];
   var _mmp = useState(null); var mmPinned  = _mmp[0], setMmPinned  = _mmp[1];
+  var _mmt = useState(null); var mmTip     = _mmt[0], setMmTip     = _mmt[1];
   var _emp = useState(null); var emPinned  = _emp[0], setEmPinned  = _emp[1];
+  var _emt = useState(null); var emTip     = _emt[0], setEmTip     = _emt[1];
   var _segTip = useState(null); var segTooltip = _segTip[0], setSegTooltip = _segTip[1];
   var _segPin = useState(null); var segPinned  = _segPin[0], setSegPinned  = _segPin[1];
 
@@ -744,8 +746,8 @@ function FibrasDocStack(props) {
   var clearAllPinsRef = useRef(null);
 
   function clearAllPins() {
-    setMmPinned(null);
-    setEmPinned(null);
+    setMmPinned(null); setMmTip(null);
+    setEmPinned(null); setEmTip(null);
     setSegPinned(null);
     setSegTooltip(null);
   }
@@ -788,13 +790,15 @@ function FibrasDocStack(props) {
         setWinStart: setWinStart, chartWidth: chartAreaW + 66 + 14,
         segPolarity: layout ? layout.segPolarity : [],
         segArousal:  layout ? layout.segArousal  : [],
-        pinnedSeg: mmPinned, setPinnedSeg: setMmPinned
+        pinnedSeg: mmPinned, setPinnedSeg: setMmPinned,
+        tipData: mmTip, setTipData: setMmTip
       })
     ),
 
     layout && React.createElement(FibrasEmoBars, {
       layout: layout, enabledEmos: enabledEmos,
-      pinnedSeg: emPinned, setPinnedSeg: setEmPinned
+      pinnedSeg: emPinned, setPinnedSeg: setEmPinned,
+      tipData: emTip, setTipData: setEmTip
     }),
 
     segLabels.length > 0 && React.createElement("div", {
