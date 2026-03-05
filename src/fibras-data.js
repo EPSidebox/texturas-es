@@ -9,9 +9,6 @@
 // ─────────────────────────────────────────────
 
 // ── clusterByVec ──
-// K-means clustering on word2vec vectors.
-// Returns {word: clusterIndex} for all words that have vectors.
-// Words without vectors get cluster 0.
 function clusterByVec(words, eng, k) {
   if (!eng || !eng.vec || !eng.vec.isLoaded() || words.length === 0) {
     var fallback = {};
@@ -22,14 +19,12 @@ function clusterByVec(words, eng, k) {
   var dim = eng.vec.dim;
   var numK = Math.min(k || 6, words.length);
 
-  // Collect words that have vectors
   var vecWords = [];
   var vecs = [];
   for (var i = 0; i < words.length; i++) {
     var v = eng.vec.getVec(words[i]);
     if (v) {
       vecWords.push(words[i]);
-      // Copy to plain array (subarray refs can shift)
       var arr = new Float32Array(dim);
       for (var d = 0; d < dim; d++) arr[d] = v[d];
       vecs.push(arr);
@@ -37,13 +32,11 @@ function clusterByVec(words, eng, k) {
   }
 
   if (vecWords.length < numK) {
-    // Not enough vectors for k clusters, assign sequentially
     var seq = {};
     for (var si = 0; si < words.length; si++) seq[words[si]] = si % Math.max(1, numK);
     return seq;
   }
 
-  // Initialize centroids from evenly spaced words
   var centroids = [];
   for (var ci = 0; ci < numK; ci++) {
     var idx = Math.floor(ci * vecWords.length / numK);
@@ -52,16 +45,12 @@ function clusterByVec(words, eng, k) {
     centroids.push(cent);
   }
 
-  // K-means iterations
   var assignments = new Array(vecWords.length);
   var maxIter = 20;
   for (var iter = 0; iter < maxIter; iter++) {
     var changed = false;
-
-    // Assign each word to nearest centroid (cosine similarity)
     for (var wi = 0; wi < vecWords.length; wi++) {
-      var bestC = 0;
-      var bestSim = -2;
+      var bestC = 0, bestSim = -2;
       for (var cj = 0; cj < numK; cj++) {
         var dot = 0, na = 0, nb = 0;
         for (var d3 = 0; d3 < dim; d3++) {
@@ -75,10 +64,7 @@ function clusterByVec(words, eng, k) {
       }
       if (assignments[wi] !== bestC) { assignments[wi] = bestC; changed = true; }
     }
-
     if (!changed) break;
-
-    // Recompute centroids
     for (var ck = 0; ck < numK; ck++) {
       var sum = new Float32Array(dim);
       var count = 0;
@@ -94,7 +80,6 @@ function clusterByVec(words, eng, k) {
     }
   }
 
-  // Build result map
   var result = {};
   var vecIdx = 0;
   for (var ri = 0; ri < words.length; ri++) {
@@ -109,9 +94,6 @@ function clusterByVec(words, eng, k) {
 }
 
 // ── detectSegProtocol ──
-// Scans text for ---SEG:Label--- markers.
-// Returns [{label, text}] or null if no markers found.
-// Text before first marker becomes segment "Pre\u00E1mbulo".
 function detectSegProtocol(text) {
   var re = /---SEG:(.+?)---/g;
   var m;
@@ -122,7 +104,6 @@ function detectSegProtocol(text) {
   if (markers.length === 0) return null;
 
   var segs = [];
-  // Text before first marker
   var preBefore = text.substring(0, markers[0].idx).trim();
   if (preBefore.length > 0) {
     segs.push({ label: "Pre\u00E1mbulo", text: preBefore });
@@ -139,8 +120,6 @@ function detectSegProtocol(text) {
 }
 
 // ── segmentText ──
-// Splits content tokens (non-stop) into N equal segments.
-// Returns [{idx, tokens, freqMap, normFreqMap, label}]
 function segmentText(enriched, numSegs) {
   var content = [];
   for (var i = 0; i < enriched.length; i++) {
@@ -166,9 +145,7 @@ function segmentText(enriched, numSegs) {
         if (fm.hasOwnProperty(nw)) normFm[nw] = fm[nw] / total;
       }
     }
-    // Bigram and trigram frequency maps
-    var ng2Map = {};
-    var ng3Map = {};
+    var ng2Map = {}, ng3Map = {};
     for (var ni = 0; ni < lemmas.length - 1; ni++) {
       var bg = lemmas[ni] + " " + lemmas[ni + 1];
       ng2Map[bg] = (ng2Map[bg] || 0) + 1;
@@ -177,9 +154,7 @@ function segmentText(enriched, numSegs) {
       var tg = lemmas[ni2] + " " + lemmas[ni2 + 1] + " " + lemmas[ni2 + 2];
       ng3Map[tg] = (ng3Map[tg] || 0) + 1;
     }
-    // Normalized n-gram maps
-    var normNg2 = {};
-    var normNg3 = {};
+    var normNg2 = {}, normNg3 = {};
     var ng2Total = Math.max(1, lemmas.length - 1);
     var ng3Total = Math.max(1, lemmas.length - 2);
     for (var b in ng2Map) { if (ng2Map.hasOwnProperty(b)) normNg2[b] = ng2Map[b] / ng2Total; }
@@ -195,9 +170,6 @@ function segmentText(enriched, numSegs) {
 }
 
 // ── segmentTextCustom ──
-// Splits enriched tokens according to custom segment boundaries.
-// customSegs: [{label, startToken, endToken}] — token index ranges in enriched (content only)
-// Returns [{idx, tokens, freqMap, normFreqMap, label}]
 function segmentTextCustom(enriched, customSegs) {
   var content = [];
   for (var i = 0; i < enriched.length; i++) {
@@ -220,8 +192,7 @@ function segmentTextCustom(enriched, customSegs) {
     if (total > 0) {
       for (var nw in fm) { if (fm.hasOwnProperty(nw)) normFm[nw] = fm[nw] / total; }
     }
-    var ng2Map = {};
-    var ng3Map = {};
+    var ng2Map = {}, ng3Map = {};
     for (var ni = 0; ni < lemmas.length - 1; ni++) {
       var bg = lemmas[ni] + " " + lemmas[ni + 1];
       ng2Map[bg] = (ng2Map[bg] || 0) + 1;
@@ -230,8 +201,7 @@ function segmentTextCustom(enriched, customSegs) {
       var tg = lemmas[ni2] + " " + lemmas[ni2 + 1] + " " + lemmas[ni2 + 2];
       ng3Map[tg] = (ng3Map[tg] || 0) + 1;
     }
-    var normNg2 = {};
-    var normNg3 = {};
+    var normNg2 = {}, normNg3 = {};
     var ng2Total = Math.max(1, lemmas.length - 1);
     var ng3Total = Math.max(1, lemmas.length - 2);
     for (var b in ng2Map) { if (ng2Map.hasOwnProperty(b)) normNg2[b] = ng2Map[b] / ng2Total; }
@@ -246,11 +216,7 @@ function segmentTextCustom(enriched, customSegs) {
   return segs;
 }
 
-// ── buildCustomSegBoundaries ──
-// Picks words based on mode with stable tiebreaking.
-// mode: "seeds" | "recurrentes" | "persistentes"
-// sortMode: "freq" | "relevance"
-// Returns ordered array of word strings.
+// ── selectWords ──
 function selectWords(freqMap, relevanceMap, seeds, mode, topN, sortMode, ngMode) {
   if (mode === "seeds") {
     var out = [];
@@ -260,13 +226,9 @@ function selectWords(freqMap, relevanceMap, seeds, mode, topN, sortMode, ngMode)
     return out;
   }
 
-  // Choose the right frequency map based on ngMode
   var srcMap = freqMap;
-  // For n-grams, relevance doesn't apply (no WordNet for multi-word),
-  // so we use frequency=1 as default relevance
   var useRelevance = ngMode === 1;
 
-  // Build candidate list
   var candidates = [];
   var w;
   for (w in srcMap) {
@@ -279,7 +241,6 @@ function selectWords(freqMap, relevanceMap, seeds, mode, topN, sortMode, ngMode)
     });
   }
 
-  // Sort with stable tiebreaking
   if (sortMode === "relevance" && useRelevance) {
     candidates.sort(function(a, b) {
       if (b.rel !== a.rel) return b.rel - a.rel;
@@ -302,17 +263,12 @@ function selectWords(freqMap, relevanceMap, seeds, mode, topN, sortMode, ngMode)
 }
 
 // ── computeSegData ──
-// Per-segment activation for each word.
-// Uses raw frequency + word2vec similarity boost from eng.vec.
-// Also computes hybrid relevance per segment: globalRel × localActivation.
-// Returns [{word: {freq: n, rel: n, act: n}, ...}, ...] (one object per segment)
 function computeSegData(segments, nodeWords, eng, decay, relevanceMap, ngMode) {
   var result = [];
   for (var s = 0; s < segments.length; s++) {
     var seg = segments[s];
     var row = {};
 
-    // Choose frequency maps based on ngMode
     var rawMap, normMap;
     if (ngMode === 2) { rawMap = seg.ng2Map || {}; normMap = seg.normNg2Map || {}; }
     else if (ngMode === 3) { rawMap = seg.ng3Map || {}; normMap = seg.normNg3Map || {}; }
@@ -323,9 +279,11 @@ function computeSegData(segments, nodeWords, eng, decay, relevanceMap, ngMode) {
       var baseFreq = rawMap[w] || 0;
       var normFreq = normMap[w] || 0;
 
-      // Word2vec boost only for unigrams
+      // Word2vec boost — track responsible source word and similarity
       var boost = 0;
       var normBoost = 0;
+      var vecSource = null;
+      var vecSim = 0;
       if (ngMode === 1 && baseFreq === 0 && eng && eng.vec && eng.vec.isLoaded()) {
         for (var lem in seg.freqMap) {
           if (!seg.freqMap.hasOwnProperty(lem)) continue;
@@ -333,7 +291,23 @@ function computeSegData(segments, nodeWords, eng, decay, relevanceMap, ngMode) {
           if (sim > 0.4) {
             var rawB = sim * seg.freqMap[lem] * (decay || 0.5);
             var normB = sim * (seg.normFreqMap[lem] || 0) * (decay || 0.5);
-            if (rawB > boost) { boost = rawB; normBoost = normB; }
+            if (rawB > boost) {
+              boost = rawB; normBoost = normB;
+              vecSource = lem; vecSim = sim;
+            }
+          }
+        }
+      }
+
+      // WordNet source — find highest-frequency corpus word with a synset path to w
+      var wnSource = null;
+      if (ngMode === 1 && baseFreq === 0 && boost === 0 && eng && eng.syn && eng.syn.ready && eng.pos && eng.pos.ready) {
+        var bestWnFreq = 0;
+        for (var wnLem in seg.freqMap) {
+          if (!seg.freqMap.hasOwnProperty(wnLem)) continue;
+          if (seg.freqMap[wnLem] > bestWnFreq) {
+            var dist = synDist(w, wnLem, eng.syn, eng.pos, 3);
+            if (dist >= 0) { bestWnFreq = seg.freqMap[wnLem]; wnSource = wnLem; }
           }
         }
       }
@@ -342,7 +316,8 @@ function computeSegData(segments, nodeWords, eng, decay, relevanceMap, ngMode) {
       var localNormAct = normFreq + normBoost;
       var globalRel = (ngMode === 1 && relevanceMap && relevanceMap[w]) ? relevanceMap[w] : 1;
 
-var provenance = null;
+      // Provenance
+      var provenance = null;
       if (baseFreq > 0) provenance = "directo";
       else if (boost > 0) provenance = "vectorial";
       else if (localAct > 0) provenance = "semantico";
@@ -352,7 +327,9 @@ var provenance = null;
         normFreq: localNormAct,
         rel: globalRel * (localAct > 0 ? localNormAct : 0),
         act: localAct,
-        provenance: provenance
+        provenance: provenance,
+        provenanceSource: vecSource || wnSource || null,
+        provenanceSim: vecSim || 0
       };
     }
     result.push(row);
@@ -361,8 +338,6 @@ var provenance = null;
 }
 
 // ── computeSegEmo ──
-// Per-segment emotion intensity averages for 4 emotions.
-// Returns [{joy: avg, fear: avg, sadness: avg, anger: avg}, ...]
 function computeSegEmo(segments) {
   var emos = ["joy", "fear", "sadness", "anger"];
   var result = [];
@@ -392,7 +367,6 @@ function computeSegEmo(segments) {
 }
 
 // ── computeFibras ──
-// Orchestrator. Returns all data needed for rendering.
 function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mode, topN, decay, sortMode, customSegBoundaries, ngMode) {
   var segments;
   var hasCustomSegs = customSegBoundaries && customSegBoundaries.length > 0;
@@ -405,8 +379,7 @@ function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mod
     segments = segmentText(enriched, numSegs);
   }
 
-  // Build global n-gram frequency map if needed
-  var globalNgMap = freqMap; // default: unigrams
+  var globalNgMap = freqMap;
   if (ng === 2) {
     globalNgMap = {};
     for (var si = 0; si < segments.length; si++) {
@@ -421,7 +394,6 @@ function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mod
     }
   }
 
-  // For n-grams, relevance doesn't apply
   var effectiveRelMap = ng === 1 ? relevanceMap : {};
 
   var nodeWords;
@@ -446,18 +418,12 @@ function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mod
   var segData = computeSegData(segments, nodeWords, eng, decay, relevanceMap, ng);
   var segEmo = computeSegEmo(segments);
 
-  // Compute global maxes for normalization
-  var maxFreq = 0;
-  var maxRel = 0;
-  var maxSegFreq = 0;
-  var maxSegRel = 0;
-  var maxSegNormFreq = 0;
+  var maxFreq = 0, maxRel = 0, maxSegFreq = 0, maxSegRel = 0, maxSegNormFreq = 0;
   for (var i = 0; i < nodeWords.length; i++) {
     var ww = nodeWords[i];
     if ((globalNgMap[ww] || 0) > maxFreq) maxFreq = globalNgMap[ww];
     if ((effectiveRelMap[ww] || 1) > maxRel) maxRel = effectiveRelMap[ww] || 1;
   }
-  // Per-segment maxes
   for (var si3 = 0; si3 < segData.length; si3++) {
     for (var wi2 = 0; wi2 < nodeWords.length; wi2++) {
       var entry = segData[si3][nodeWords[wi2]];
@@ -469,7 +435,6 @@ function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mod
     }
   }
 
-  // Word2vec clusters (only for unigrams)
   var vecClusterMap = ng === 1
     ? clusterByVec(nodeWords, eng, Math.min(8, Math.max(3, Math.floor(nodeWords.length / 4))))
     : {};
@@ -495,20 +460,6 @@ function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mod
 }
 
 // ── buildWindowedLayout ──
-// Computes geometry for a windowed view of Fibras.
-// Pure data — no rendering. Produces rectangles and curve control points.
-//
-// Returns {
-//   columns: [{x, segIdx}],
-//   wordSlots: [{
-//     word, rank, freq, rel, isSeed, color,
-//     nodes: [{col, segIdx, x, y, w, h, isReal, opacity, primary, secondary}],
-//     links: [{srcCol, tgtCol, srcNode, tgtNode}]
-//   }],
-//   emoBars: [{segIdx, x, joy, fear, sadness, anger}],
-//   canvasW, canvasH,
-//   maxFreq, maxRel
-// }
 function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMode, canvasW, canvasH, commMap, eng) {
   var nodeWords = fibras.nodeWords;
   var segments = fibras.segments;
@@ -521,20 +472,18 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
   var winEnd = Math.min(winStart + winSize, numSegs);
   var numCols = winEnd - winStart;
 
-  // Layout constants
-  var padLeft = 80;   // space for labels
+  var padLeft = 80;
   var padRight = 20;
   var padTop = 20;
-  var emoBarH = 40;   // space reserved for emotion bars at bottom
+  var emoBarH = 40;
   var padBottom = 10;
   var chartW = canvasW - padLeft - padRight;
   var chartH = canvasH - padTop - emoBarH - padBottom;
 
   var colW = numCols > 0 ? chartW / numCols : chartW;
   var nodeW = Math.max(4, Math.min(colW * 0.4, 30));
-  var gapY = 2; // vertical gap between nodes in a column
+  var gapY = 2;
 
-  // Build column x-positions (edge-to-edge across chart area)
   var columns = [];
   for (var c = 0; c < numCols; c++) {
     var colX;
@@ -545,22 +494,15 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
     }
     var segIdx0 = winStart + c;
     var segLabel = segments[segIdx0] ? segments[segIdx0].label : null;
-    columns.push({
-      x: colX,
-      segIdx: segIdx0,
-      label: segLabel
-    });
+    columns.push({ x: colX, segIdx: segIdx0, label: segLabel });
   }
 
-  // Build word rank
   var wordRank = {};
   for (var ri = 0; ri < nodeWords.length; ri++) {
     wordRank[nodeWords[ri]] = ri;
   }
 
-  // Compute max values for normalization
-  var maxFreq = 0;
-  var maxRel = 0;
+  var maxFreq = 0, maxRel = 0;
   for (var mi = 0; mi < nodeWords.length; mi++) {
     var mw = nodeWords[mi];
     if (freqMap[mw] > maxFreq) maxFreq = freqMap[mw];
@@ -569,13 +511,10 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
   if (maxFreq === 0) maxFreq = 1;
   if (maxRel === 0) maxRel = 1;
 
-  // Normalization maxes for per-segment values
   var maxSegFreq = fibras.maxSegFreq;
   var maxSegRel = fibras.maxSegRel;
   var maxSegNormFreq = fibras.maxSegNormFreq;
 
-  // Compute node height based on primary metric (per segment)
-  // Total available height divided among all words + gaps
   var numWords = nodeWords.length;
   var totalGap = (numWords - 1) * gapY;
   var availH = Math.max(10, chartH - totalGap);
@@ -583,7 +522,6 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
   var minNodeH = 1;
   var maxNodeH = Math.max(minNodeH + 1, baseNodeH * 2);
 
-  // Color assignment per word
   function getWordColor(w, rank) {
     if (colorMode === "valencia") {
       var pol = commMap && commMap[w] !== undefined ? commMap[w] : 0;
@@ -594,12 +532,10 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
     if (colorMode === "rango") {
       return CC[rank % CC.length];
     }
-    // Default: comunidad — use word2vec clusters
     var cluster = fibras.vecClusterMap ? (fibras.vecClusterMap[w] || 0) : 0;
     return CC[cluster % CC.length];
   }
 
-  // Build per-word slot data
   var wordSlots = [];
   for (var wi = 0; wi < nodeWords.length; wi++) {
     var w = nodeWords[wi];
@@ -608,14 +544,10 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
     var rank = wi;
     var isSeed = seeds && seeds.has ? seeds.has(w) : false;
     var color = getWordColor(w, rank);
-
-    // Y position from rank (center of the slot)
     var y = padTop + rank * (baseNodeH + gapY);
 
-    // Build nodes per visible column
     var slotNodes = [];
-    var firstRealCol = -1;
-    var lastRealCol = -1;
+    var firstRealCol = -1, lastRealCol = -1;
 
     for (var c2 = 0; c2 < numCols; c2++) {
       var segIdx = winStart + c2;
@@ -625,8 +557,6 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
       var localRel = segEntry ? segEntry.rel : 0;
       var isReal = segEntry ? segEntry.act > 0 : false;
 
-      // Primary metric controls height (per segment, using normalized freq)
-      // Secondary metric controls opacity (per segment)
       var primaryVal, secondaryVal, primaryNorm, secondaryNorm;
       if (sortMode === "relevance") {
         primaryVal = localRel;
@@ -641,7 +571,6 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
       }
 
       var nodeH = isReal ? minNodeH + primaryNorm * (maxNodeH - minNodeH) : 0;
-      // Opacity: base 0.25 + secondary metric scales up to 1.0
       var opacity = isReal ? 0.25 + secondaryNorm * 0.75 : 0;
 
       if (isReal) {
@@ -653,7 +582,7 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
         col: c2,
         segIdx: segIdx,
         x: columns[c2].x - nodeW / 2,
-        y: y + (baseNodeH - nodeH) / 2,  // center node vertically in slot
+        y: y + (baseNodeH - nodeH) / 2,
         w: nodeW,
         h: nodeH,
         isReal: isReal,
@@ -662,30 +591,23 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
         secondary: secondaryVal,
         primaryNorm: primaryNorm,
         secondaryNorm: secondaryNorm,
-        provenance: segEntry ? segEntry.provenance : null
+        provenance: segEntry ? segEntry.provenance : null,
+        provenanceSource: segEntry ? segEntry.provenanceSource : null,
+        provenanceSim: segEntry ? segEntry.provenanceSim : 0
       });
     }
 
-    // Build links: only between firstReal and lastReal columns
-    // Links connect adjacent columns; ghost segments produce no visible link
     var slotLinks = [];
     if (firstRealCol >= 0 && lastRealCol > firstRealCol) {
       for (var c3 = firstRealCol; c3 < lastRealCol; c3++) {
         var srcNode = slotNodes[c3];
         var tgtNode = slotNodes[c3 + 1];
-        // Only create links where both endpoints are real
         if (srcNode.isReal && tgtNode.isReal) {
-          slotLinks.push({
-            srcCol: c3,
-            tgtCol: c3 + 1,
-            srcNode: srcNode,
-            tgtNode: tgtNode
-          });
+          slotLinks.push({ srcCol: c3, tgtCol: c3 + 1, srcNode: srcNode, tgtNode: tgtNode });
         }
       }
     }
 
-    // Determine label positions: first real node + first real after each ghost gap
     var labelCols = [];
     if (firstRealCol >= 0) {
       labelCols.push(firstRealCol);
@@ -701,25 +623,15 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
     }
 
     wordSlots.push({
-      word: w,
-      rank: rank,
-      freq: freq,
-      rel: rel,
-      isSeed: isSeed,
-      color: color,
-      y: y,
-      slotH: baseNodeH,
-      nodes: slotNodes,
-      links: slotLinks,
-      firstRealCol: firstRealCol,
-      lastRealCol: lastRealCol,
+      word: w, rank: rank, freq: freq, rel: rel,
+      isSeed: isSeed, color: color, y: y, slotH: baseNodeH,
+      nodes: slotNodes, links: slotLinks,
+      firstRealCol: firstRealCol, lastRealCol: lastRealCol,
       labelCols: labelCols
     });
   }
 
-  // ── Cross-stream links (word2vec similarity) ──
-  // When word A is real in column C but absent in C+1, and word B is real in C+1
-  // with similarity > 0.5, create a cross-stream ribbon.
+  // ── Cross-stream links ──
   var crossLinks = [];
   var SIM_THRESHOLD = 0.5;
   if (eng && eng.vec && eng.vec.isLoaded()) {
@@ -728,29 +640,20 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
       for (var xc = 0; xc < numCols - 1; xc++) {
         var nodeA = slotA.nodes[xc];
         var nodeANext = slotA.nodes[xc + 1];
-        // A is real in this column but not in the next
         if (!nodeA.isReal || nodeANext.isReal) continue;
-
         for (var xwj = 0; xwj < wordSlots.length; xwj++) {
           if (xwi === xwj) continue;
           var slotB = wordSlots[xwj];
           var nodeB = slotB.nodes[xc + 1];
           if (!nodeB.isReal) continue;
-
           var sim = eng.vec.similarity(slotA.word, slotB.word);
           if (sim >= SIM_THRESHOLD) {
             crossLinks.push({
-              srcSlotIdx: xwi,
-              tgtSlotIdx: xwj,
-              srcNode: nodeA,
-              tgtNode: nodeB,
-              srcWord: slotA.word,
-              tgtWord: slotB.word,
-              srcColor: slotA.color,
-              tgtColor: slotB.color,
-              similarity: sim,
-              srcCol: xc,
-              tgtCol: xc + 1
+              srcSlotIdx: xwi, tgtSlotIdx: xwj,
+              srcNode: nodeA, tgtNode: nodeB,
+              srcWord: slotA.word, tgtWord: slotB.word,
+              srcColor: slotA.color, tgtColor: slotB.color,
+              similarity: sim, srcCol: xc, tgtCol: xc + 1
             });
           }
         }
@@ -758,62 +661,34 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
     }
   }
 
-  // Build emotion bar data + per-segment polarity and arousal for minimap
   var emoBars = [];
   for (var c4 = 0; c4 < numCols; c4++) {
     var segIdx2 = winStart + c4;
     var emo = segEmo[segIdx2] || { joy: 0, fear: 0, sadness: 0, anger: 0 };
-    emoBars.push({
-      segIdx: segIdx2,
-      x: columns[c4].x,
-      joy: emo.joy,
-      fear: emo.fear,
-      sadness: emo.sadness,
-      anger: emo.anger
-    });
+    emoBars.push({ segIdx: segIdx2, x: columns[c4].x, joy: emo.joy, fear: emo.fear, sadness: emo.sadness, anger: emo.anger });
   }
 
-  // Per-segment polarity and arousal (for minimap, computed over ALL segments)
-  var segPolarity = [];
-  var segArousal = [];
+  var segPolarity = [], segArousal = [];
   for (var sp = 0; sp < segments.length; sp++) {
     var sToks = segments[sp].tokens;
-    var polSum = 0, polCount = 0;
-    var aroSum = 0, aroCount = 0;
+    var polSum = 0, polCount = 0, aroSum = 0, aroCount = 0;
     for (var st = 0; st < sToks.length; st++) {
-      if (sToks[st].polarity !== null && sToks[st].polarity !== undefined) {
-        polSum += sToks[st].polarity;
-        polCount++;
-      }
-      if (sToks[st].arousal !== null && sToks[st].arousal !== undefined) {
-        aroSum += sToks[st].arousal;
-        aroCount++;
-      }
+      if (sToks[st].polarity !== null && sToks[st].polarity !== undefined) { polSum += sToks[st].polarity; polCount++; }
+      if (sToks[st].arousal !== null && sToks[st].arousal !== undefined) { aroSum += sToks[st].arousal; aroCount++; }
     }
     segPolarity.push(polCount > 0 ? polSum / polCount : 0);
     segArousal.push(aroCount > 0 ? aroSum / aroCount : 0);
   }
 
   return {
-    columns: columns,
-    wordSlots: wordSlots,
-    crossLinks: crossLinks,
-    emoBars: emoBars,
-    segPolarity: segPolarity,
-    segArousal: segArousal,
-    canvasW: canvasW,
-    canvasH: canvasH,
-    chartH: chartH,
-    padLeft: padLeft,
-    padTop: padTop,
-    emoBarY: padTop + chartH + 4,
-    emoBarH: emoBarH,
-    nodeW: nodeW,
-    colW: colW,
-    maxFreq: maxFreq,
-    maxRel: maxRel,
-    numCols: numCols,
-    wordRank: wordRank,
+    columns: columns, wordSlots: wordSlots, crossLinks: crossLinks,
+    emoBars: emoBars, segPolarity: segPolarity, segArousal: segArousal,
+    canvasW: canvasW, canvasH: canvasH, chartH: chartH,
+    padLeft: padLeft, padTop: padTop,
+    emoBarY: padTop + chartH + 4, emoBarH: emoBarH,
+    nodeW: nodeW, colW: colW,
+    maxFreq: maxFreq, maxRel: maxRel,
+    numCols: numCols, wordRank: wordRank,
     hasCustomSegs: fibras.hasCustomSegs
   };
 }
