@@ -12,7 +12,7 @@
 // ── Spanish emotion labels ──
 var _EMO_ES = { joy: "Felicidad", fear: "Miedo", sadness: "Tristeza", anger: "Ira" };
 
-// ── Provenance labels + colors ──
+// ── Provenance labels ──
 var _PROV_LABELS = {
   directo:   "Aparece directamente",
   vectorial: "Activado por similitud vectorial",
@@ -98,8 +98,6 @@ function _polarityToRgb(pol) {
 }
 
 // ── Ribbon drawing ──
-// Independent control points per edge based on vertical travel distance.
-// Quad sorting prevents self-intersecting shapes.
 function _drawRibbon(p, sT, sB, sR, tT, tB, tL, getColor, steps) {
   var baseCp = (tL - sR) / 3;
   var cpT = baseCp + Math.abs(tT - sT) * 0.4;
@@ -132,9 +130,6 @@ function _drawRibbon(p, sT, sB, sR, tT, tB, tL, getColor, steps) {
   }
 }
 
-// ── Tooltip state (module-level, shared across redraws) ──
-var _pinnedNode = null;   // {slotIdx, nodeIdx} — pinned Sankey node
-
 // ════════════════════════════════════════════
 // FibrasChart — P5 canvas
 // ════════════════════════════════════════════
@@ -144,11 +139,13 @@ function FibrasChart(props) {
   var propsRef = useRef(props);
   propsRef.current = props;
 
-  // Tooltip state
+  // Tooltip state — transient only, no pinning
   var _tt = useState(null);
   var tooltipData = _tt[0], setTooltipData = _tt[1];
-  var _tp = useState(null);
-  var pinnedData = _tp[0], setPinnedData = _tp[1];
+
+  // Locked word state (stream highlight)
+  var _lw = useState(null);
+  var lockedWi = _lw[0], setLockedWi = _lw[1];
 
   useEffect(function() {
     if (!containerRef.current || !propsRef.current.layout) return;
@@ -321,22 +318,20 @@ function FibrasChart(props) {
         }
 
         // ── Node circles (topmost layer) ──
+        var accentRgb = _hexToRgb(T.accent);
         for (var wi2 = 0; wi2 < lay.wordSlots.length; wi2++) {
           var slot2 = lay.wordSlots[wi2];
           for (var ni2 = 0; ni2 < slot2.nodes.length; ni2++) {
             var nd2 = slot2.nodes[ni2];
             if (!nd2.isReal) continue;
             var isHov = propsRef.current.hoveredWord === slot2.word;
-            var isPin = propsRef.current.pinnedNode &&
-                        propsRef.current.pinnedNode.wi === wi2 &&
-                        propsRef.current.pinnedNode.ci === ni2;
+            var isLocked = propsRef.current.lockedWords && propsRef.current.lockedWords.has(slot2.word);
             p.noStroke();
-            p.fill(p.color(255, 255, 255, isHov || isPin ? 1.0 : 0.5));
-            p.ellipse(nd2.x + nd2.w / 2, nd2.y + nd2.h / 2, isHov || isPin ? 10 : 5, isHov || isPin ? 10 : 5);
-            // Pin ring
-            if (isPin) {
+            p.fill(p.color(255, 255, 255, isHov || isLocked ? 1.0 : 0.5));
+            p.ellipse(nd2.x + nd2.w / 2, nd2.y + nd2.h / 2, isHov || isLocked ? 10 : 5, isHov || isLocked ? 10 : 5);
+            if (isLocked) {
               p.noFill();
-              p.stroke(p.color(_hexToRgb(T.accent)[0], _hexToRgb(T.accent)[1], _hexToRgb(T.accent)[2], 1.0));
+              p.stroke(p.color(accentRgb[0], accentRgb[1], accentRgb[2], 1.0));
               p.strokeWeight(1);
               p.ellipse(nd2.x + nd2.w / 2, nd2.y + nd2.h / 2, 16, 16);
               p.noStroke();
@@ -345,7 +340,7 @@ function FibrasChart(props) {
         }
       };
 
-      // ── Mouse: hover ──
+      // ── Mouse: hover — show transient tooltip ──
       p.mouseMoved = function() {
         var lay = propsRef.current.layout;
         if (!lay) return;
@@ -356,7 +351,7 @@ function FibrasChart(props) {
           return;
         }
         var HIT = 7;
-        var found = null, foundNode = null;
+        var found = null, foundData = null;
         outer: for (var wi = 0; wi < lay.wordSlots.length; wi++) {
           var slot = lay.wordSlots[wi];
           for (var ni = 0; ni < slot.nodes.length; ni++) {
@@ -366,24 +361,24 @@ function FibrasChart(props) {
             var dx = mx - cx, dy = my - cy;
             if (dx * dx + dy * dy < HIT * HIT) {
               found = slot.word;
-              foundNode = { wi: wi, ni: ni, nd: nd, word: slot.word, mx: p.mouseX, my: p.mouseY };
+              foundData = { word: slot.word, nd: nd, mx: p.mouseX, my: p.mouseY };
               break outer;
             }
           }
         }
         if (found !== propsRef.current.hoveredWord) propsRef.current.setHoveredWord(found);
-        if (!propsRef.current.pinnedNode) {
-          if (propsRef.current.setTooltipData) propsRef.current.setTooltipData(foundNode);
-        }
+        if (propsRef.current.setTooltipData) propsRef.current.setTooltipData(foundData);
       };
 
-      // ── Mouse: click to lock / pin tooltip ──
+      // ── Mouse: click — lock stream, click elsewhere clears ──
       p.mousePressed = function() {
         var lay = propsRef.current.layout;
         if (!lay) return;
         var mx = p.mouseX, my = p.mouseY;
         if (mx < 0 || mx > lay.canvasW || my < 0 || my > lay.canvasH) return;
         var HIT = 7;
+        // Hide tooltip on any click
+        if (propsRef.current.setTooltipData) propsRef.current.setTooltipData(null);
         outer: for (var wi = 0; wi < lay.wordSlots.length; wi++) {
           var slot = lay.wordSlots[wi];
           for (var ni = 0; ni < slot.nodes.length; ni++) {
@@ -392,24 +387,13 @@ function FibrasChart(props) {
             var cx = nd.x + nd.w / 2, cy = nd.y + nd.h / 2;
             var dx = mx - cx, dy = my - cy;
             if (dx * dx + dy * dy < HIT * HIT) {
-              var cur = propsRef.current.pinnedNode;
-              if (cur && cur.wi === wi && cur.ci === ni) {
-                if (propsRef.current.setPinnedNode) propsRef.current.setPinnedNode(null);
-                if (propsRef.current.setTooltipData) propsRef.current.setTooltipData(null);
-              } else {
-                if (propsRef.current.setPinnedNode) propsRef.current.setPinnedNode({ wi: wi, ci: ni });
-                if (propsRef.current.setTooltipData) propsRef.current.setTooltipData({ wi: wi, ni: ni, nd: nd, word: slot.word, mx: mx, my: my });
-              }
               if (propsRef.current.toggleLocked) propsRef.current.toggleLocked(slot.word);
-              break outer;
+              return;
             }
           }
         }
-      };
-
-      p.mouseLeaved = function() {
-        if (propsRef.current.setHoveredWord) propsRef.current.setHoveredWord(null);
-        if (!propsRef.current.pinnedNode && propsRef.current.setTooltipData) propsRef.current.setTooltipData(null);
+        // Click elsewhere — clear all locks
+        if (propsRef.current.clearLocked) propsRef.current.clearLocked();
       };
     };
 
@@ -421,12 +405,12 @@ function FibrasChart(props) {
 
   useEffect(function() {
     if (p5Ref.current) p5Ref.current.redraw();
-  }, [props.hoveredWord, props.lockedWords, props.seeds, props.enabledEmos, props.pinnedNode]);
+  }, [props.hoveredWord, props.lockedWords, props.seeds, props.enabledEmos]);
 
   // Build tooltip content
-  function buildSankeyTip(data) {
-    if (!data) return null;
-    var nd = data.nd;
+  var tipEl = null;
+  if (tooltipData) {
+    var nd = tooltipData.nd;
     var prov = nd.provenance || "directo";
     var provColor = prov === "directo" ? T.positive : prov === "vectorial" ? T.arousal : T.flow;
     var srcLine = null;
@@ -444,26 +428,25 @@ function FibrasChart(props) {
         );
       }
     }
-    return React.createElement("div", {
+    tipEl = React.createElement("div", {
       style: {
         position: "fixed", pointerEvents: "none", zIndex: 100,
-        left: data.mx + 14, top: data.my - 10,
-        background: T.bg + "ee", border: "1px solid " + (props.pinnedNode ? T.accent : T.borderLight),
+        left: tooltipData.mx + 14, top: tooltipData.my - 10,
+        background: T.bgCard,
+        border: "1px solid " + T.borderLight,
         borderRadius: T.radius4, padding: T.pad8,
         fontFamily: T.fontMono, fontSize: T.fs10, color: T.text,
         lineHeight: 1.7, backdropFilter: "blur(2px)", whiteSpace: "nowrap"
       }
     },
       React.createElement("div", { style: { color: T.accent, fontSize: 9, marginBottom: 2 } },
-        data.word + " \u00B7 S" + (nd.segIdx + 1)
+        tooltipData.word + " \u00B7 S" + (nd.segIdx + 1)
       ),
       React.createElement("div", { style: { color: T.textMid } },
-        "Frecuencia ",
-        React.createElement("span", { style: { color: T.text } }, nd.primary !== undefined ? nd.primary.toFixed ? nd.primary.toFixed(0) : nd.primary : "—")
+        "Frecuencia ", React.createElement("span", { style: { color: T.text } }, nd.primary !== undefined ? String(Math.round(nd.primary)) : "\u2014")
       ),
       React.createElement("div", { style: { color: T.textMid } },
-        "Relevancia ",
-        React.createElement("span", { style: { color: T.text } }, nd.secondary !== undefined ? nd.secondary.toFixed(3) : "—")
+        "Relevancia ", React.createElement("span", { style: { color: T.text } }, nd.secondary !== undefined ? nd.secondary.toFixed(3) : "\u2014")
       ),
       React.createElement("div", { style: { color: provColor, fontSize: 9, marginTop: 3 } },
         "\u2B21 " + (_PROV_LABELS[prov] || prov)
@@ -472,11 +455,12 @@ function FibrasChart(props) {
     );
   }
 
-  var activeTooltip = tooltipData || null;
-
   return React.createElement("div", { style: { position: "relative" } },
-    React.createElement("div", { ref: containerRef, style: { background: T.bg, borderRadius: T.radius6, border: "1px solid " + T.border, overflow: "hidden" } }),
-    buildSankeyTip(activeTooltip)
+    React.createElement("div", {
+      ref: containerRef,
+      style: { background: T.bg, borderRadius: T.radius6, border: "1px solid " + T.border, overflow: "hidden" }
+    }),
+    tipEl
   );
 }
 
@@ -499,6 +483,7 @@ function FibrasMinimap(props) {
   var showNav  = numSegs > winSize;
   var barH     = 28;
   var segW     = chartWidth / numSegs;
+  var midY     = barH / 2;
 
   var maxArousal = 0;
   for (var ai = 0; ai < segArousal.length; ai++) {
@@ -508,36 +493,27 @@ function FibrasMinimap(props) {
 
   var navW = (winSize / numSegs) * chartWidth;
   var navX = (winStart / numSegs) * chartWidth;
-  var midY = barH / 2;
-
-  function handleClick(ev) {
-    var rect = ev.currentTarget.getBoundingClientRect();
-    var x = ev.clientX - rect.left;
-    var seg = Math.floor((x / chartWidth) * numSegs);
-    // Pin tooltip
-    if (pinnedSeg === seg) {
-      setPinnedSeg(null); setTipData(null);
-    } else {
-      setPinnedSeg(seg);
-      setTipData({ seg: seg, x: ev.clientX, y: ev.clientY });
-    }
-    // Navigate
-    var ns = Math.max(0, Math.min(seg - Math.floor(winSize / 2), maxStart));
-    setWinStart(ns);
-  }
 
   function handleMouseMove(ev) {
     if (pinnedSeg !== null) return;
     var rect = ev.currentTarget.getBoundingClientRect();
     var x = ev.clientX - rect.left;
     var seg = Math.floor((x / chartWidth) * numSegs);
-    if (seg >= 0 && seg < numSegs) {
-      setTipData({ seg: seg, x: ev.clientX, y: ev.clientY });
-    }
+    if (seg >= 0 && seg < numSegs) setTipData({ seg: seg, x: ev.clientX, y: ev.clientY });
   }
 
   function handleMouseLeave() {
     if (pinnedSeg === null) setTipData(null);
+  }
+
+  function handleClick(ev) {
+    var rect = ev.currentTarget.getBoundingClientRect();
+    var x = ev.clientX - rect.left;
+    var seg = Math.floor((x / chartWidth) * numSegs);
+    if (pinnedSeg === seg) { setPinnedSeg(null); setTipData(null); }
+    else { setPinnedSeg(seg); setTipData({ seg: seg, x: ev.clientX, y: ev.clientY }); }
+    var ns = Math.max(0, Math.min(seg - Math.floor(winSize / 2), maxStart));
+    setWinStart(ns);
   }
 
   var arousalDashes = segArousal.map(function(val, i) {
@@ -546,25 +522,24 @@ function FibrasMinimap(props) {
     return { x1: i * segW + 2, x2: (i + 1) * segW - 2, y: y };
   });
 
-  // Tooltip content
-  var activeTip = tipData;
+  // Tooltip
   var tipEl = null;
-  if (activeTip && activeTip.seg >= 0 && activeTip.seg < numSegs) {
-    var pol = segPolarity[activeTip.seg] || 0;
-    var aro = segArousal[activeTip.seg] || 0;
+  if (tipData && tipData.seg >= 0 && tipData.seg < numSegs) {
+    var pol = segPolarity[tipData.seg] || 0;
+    var aro = segArousal[tipData.seg]  || 0;
     var polColor = pol > 0.05 ? T.positive : pol < -0.05 ? T.negative : T.neutral;
     tipEl = React.createElement("div", {
       style: {
         position: "fixed", pointerEvents: "none", zIndex: 100,
-        left: activeTip.x + 14, top: activeTip.y - 10,
-        background: T.bg + "ee",
+        left: tipData.x + 14, top: tipData.y - 10,
+        background: T.bgCard,
         border: "1px solid " + (pinnedSeg !== null ? T.accent : T.borderLight),
         borderRadius: T.radius4, padding: T.pad8,
         fontFamily: T.fontMono, fontSize: T.fs10, color: T.text,
         lineHeight: 1.7, backdropFilter: "blur(2px)", whiteSpace: "nowrap"
       }
     },
-      React.createElement("div", { style: { color: T.accent, fontSize: 9, marginBottom: 2 } }, "Segmento " + (activeTip.seg + 1)),
+      React.createElement("div", { style: { color: T.accent, fontSize: 9, marginBottom: 2 } }, "Segmento " + (tipData.seg + 1)),
       React.createElement("div", { style: { color: T.textMid } },
         "Polaridad ", React.createElement("span", { style: { color: polColor } }, (pol > 0 ? "+" : "") + pol.toFixed(3))
       ),
@@ -682,23 +657,22 @@ function FibrasEmoBars(props) {
   }
   if (maxEmo === 0) maxEmo = 1;
 
-  var activeTip = tipData;
   var tipEl = null;
-  if (activeTip) {
-    var ebar = layout.emoBars[activeTip.seg];
+  if (tipData) {
+    var ebar = layout.emoBars[tipData.seg];
     if (ebar) {
       tipEl = React.createElement("div", {
         style: {
           position: "fixed", pointerEvents: "none", zIndex: 100,
-          left: activeTip.x + 14, top: activeTip.y - 10,
-          background: T.bg + "ee",
+          left: tipData.x + 14, top: tipData.y - 10,
+          background: T.bgCard,
           border: "1px solid " + (pinnedSeg !== null ? T.accent : T.borderLight),
           borderRadius: T.radius4, padding: T.pad8,
           fontFamily: T.fontMono, fontSize: T.fs10, color: T.text,
           lineHeight: 1.7, backdropFilter: "blur(2px)", whiteSpace: "nowrap"
         }
       },
-        React.createElement("div", { style: { color: T.accent, fontSize: 9, marginBottom: 2 } }, "Segmento " + (activeTip.seg + 1)),
+        React.createElement("div", { style: { color: T.accent, fontSize: 9, marginBottom: 2 } }, "Segmento " + (tipData.seg + 1)),
         emoKeys.map(function(ek) {
           return React.createElement("div", { key: ek, style: { color: T.textMid } },
             React.createElement("span", { style: { color: EC[ek] } }, _EMO_ES[ek] || ek),
@@ -715,8 +689,8 @@ function FibrasEmoBars(props) {
       var active = emoKeys.filter(function(ek) { return enabledEmos && enabledEmos.has(ek); });
       var totalW = active.length * barW + (active.length - 1) * 1;
       var startX = ebar.x - totalW / 2;
-
-      return React.createElement("div", { key: ebi,
+      return React.createElement("div", {
+        key: ebi,
         style: { position: "absolute", left: startX - 4, top: 0, width: totalW + 8, height: layout.emoBarH, cursor: "pointer" },
         onMouseMove: function(ev) {
           if (pinnedSeg !== null) return;
@@ -756,6 +730,7 @@ function FibrasDocStack(props) {
   var colorMode    = props.colorMode;
   var lockedWords  = props.lockedWords;
   var toggleLocked = props.toggleLocked;
+  var clearLocked  = props.clearLocked;
   var commMap      = props.commMap;
   var canvasW      = props.canvasW || 800;
   var canvasH      = props.canvasH || 500;
@@ -764,7 +739,6 @@ function FibrasDocStack(props) {
 
   var _ws = useState(0); var winStart = _ws[0], setWinStart = _ws[1];
   var _hw = useState(null); var hoveredWord = _hw[0], setHoveredWord = _hw[1];
-  var _pn = useState(null); var pinnedNode = _pn[0], setPinnedNode = _pn[1];
   var _td = useState(null); var tooltipData = _td[0], setTooltipData = _td[1];
   var _segTip = useState(null); var segTooltip = _segTip[0], setSegTooltip = _segTip[1];
   var _segPin = useState(null); var segPinned = _segPin[0], setSegPinned = _segPin[1];
@@ -786,7 +760,6 @@ function FibrasDocStack(props) {
   if (!fibras) return null;
 
   var chartAreaW = canvasW - (layout ? layout.padLeft : 80) - 20;
-
   var segLabels = layout ? layout.columns.map(function(col) {
     return { segIdx: col.segIdx, x: col.x, label: col.label };
   }) : [];
@@ -853,8 +826,8 @@ function FibrasDocStack(props) {
       layout: layout, seeds: seeds,
       hoveredWord: hoveredWord, setHoveredWord: setHoveredWord,
       lockedWords: lockedWords, toggleLocked: toggleLocked,
+      clearLocked: clearLocked,
       enabledEmos: enabledEmos,
-      pinnedNode: pinnedNode, setPinnedNode: setPinnedNode,
       tooltipData: tooltipData, setTooltipData: setTooltipData
     })
   );
@@ -874,6 +847,7 @@ function FibrasMultiDoc(props) {
   var colorMode     = props.colorMode;
   var lockedWords   = props.lockedWords;
   var toggleLocked  = props.toggleLocked;
+  var clearLocked   = props.clearLocked;
   var commMapByDoc  = props.commMapByDoc || {};
   var canvasW       = props.canvasW || 800;
   var canvasH       = props.canvasH || 500;
@@ -896,7 +870,7 @@ function FibrasMultiDoc(props) {
     return React.createElement(FibrasDocStack, {
       fibras: fibrasDataMap[id], seeds: seeds, enabledEmos: enabledEmos,
       docLabel: doc ? doc.label : "", sortMode: sortMode, colorMode: colorMode,
-      lockedWords: lockedWords, toggleLocked: toggleLocked,
+      lockedWords: lockedWords, toggleLocked: toggleLocked, clearLocked: clearLocked,
       commMap: commMapByDoc[id], canvasW: canvasW, canvasH: canvasH, eng: engProp
     });
   }
@@ -908,7 +882,7 @@ function FibrasMultiDoc(props) {
       return React.createElement(FibrasDocStack, {
         key: did, fibras: fibrasDataMap[did], seeds: seeds, enabledEmos: enabledEmos,
         docLabel: doc ? doc.label : "", sortMode: sortMode, colorMode: colorMode,
-        lockedWords: lockedWords, toggleLocked: toggleLocked,
+        lockedWords: lockedWords, toggleLocked: toggleLocked, clearLocked: clearLocked,
         commMap: commMapByDoc[did], canvasW: canvasW, canvasH: stackH, eng: engProp
       });
     })
