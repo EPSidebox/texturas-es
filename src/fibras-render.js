@@ -357,7 +357,6 @@ function FibrasChart(props) {
             var dx = mx - cx, dy = my - cy;
             if (dx * dx + dy * dy < HIT * HIT) {
               found = slot.word;
-              // Use page coordinates for fixed tooltip positioning
               var rect = containerRef.current.getBoundingClientRect();
               foundData = { word: slot.word, nd: nd, mx: p.mouseX + rect.left, my: p.mouseY + rect.top };
               break outer;
@@ -368,14 +367,18 @@ function FibrasChart(props) {
         if (propsRef.current.setTooltipData) propsRef.current.setTooltipData(foundData);
       };
 
-      // ── Mouse: click — lock stream, click elsewhere clears ──
+      // ── Mouse: click ──
+      // Node circle → pin/unpin tooltip
+      // Ribbon edge → lock/unlock stream
+      // Elsewhere → clear all
       p.mousePressed = function() {
         var lay = propsRef.current.layout;
         if (!lay) return;
         var mx = p.mouseX, my = p.mouseY;
         if (mx < 0 || mx > lay.canvasW || my < 0 || my > lay.canvasH) return;
         var HIT = 7;
-        if (propsRef.current.setTooltipData) propsRef.current.setTooltipData(null);
+
+        // Check node circles first
         outer: for (var wi = 0; wi < lay.wordSlots.length; wi++) {
           var slot = lay.wordSlots[wi];
           for (var ni = 0; ni < slot.nodes.length; ni++) {
@@ -384,13 +387,39 @@ function FibrasChart(props) {
             var cx = nd.x + nd.w / 2, cy = nd.y + nd.h / 2;
             var dx = mx - cx, dy = my - cy;
             if (dx * dx + dy * dy < HIT * HIT) {
-              if (propsRef.current.toggleLocked) propsRef.current.toggleLocked(slot.word);
+              // Toggle pinned tooltip for this node
+              var cur = propsRef.current.pinnedTooltip;
+              if (cur && cur.word === slot.word && cur.nd === nd) {
+                if (propsRef.current.setPinnedTooltip) propsRef.current.setPinnedTooltip(null);
+              } else {
+                var rect = containerRef.current.getBoundingClientRect();
+                var pinData = { word: slot.word, nd: nd, mx: p.mouseX + rect.left, my: p.mouseY + rect.top };
+                if (propsRef.current.setPinnedTooltip) propsRef.current.setPinnedTooltip(pinData);
+              }
               return;
             }
           }
         }
-        // Click elsewhere — clear all locks
+
+        // Check ribbon edges
+        outer2: for (var wi2 = 0; wi2 < lay.wordSlots.length; wi2++) {
+          var slot2 = lay.wordSlots[wi2];
+          for (var li = 0; li < slot2.links.length; li++) {
+            var lk = slot2.links[li];
+            var lxMin = lk.srcNode.x + lk.srcNode.w;
+            var lxMax = lk.tgtNode.x;
+            var lyMin = Math.min(lk.srcNode.y, lk.tgtNode.y);
+            var lyMax = Math.max(lk.srcNode.y + lk.srcNode.h, lk.tgtNode.y + lk.tgtNode.h);
+            if (mx >= lxMin && mx <= lxMax && my >= lyMin && my <= lyMax) {
+              if (propsRef.current.toggleLocked) propsRef.current.toggleLocked(slot2.word);
+              break outer2;
+            }
+          }
+        }
+
+        // Click elsewhere — clear all
         if (propsRef.current.clearLocked) propsRef.current.clearLocked();
+        if (propsRef.current.setPinnedTooltip) propsRef.current.setPinnedTooltip(null);
       };
     };
 
@@ -402,13 +431,11 @@ function FibrasChart(props) {
 
   useEffect(function() {
     if (p5Ref.current) p5Ref.current.redraw();
-  }, [props.hoveredWord, props.lockedWords, props.seeds, props.enabledEmos]);
+  }, [props.hoveredWord, props.lockedWords, props.seeds, props.enabledEmos, props.pinnedTooltip]);
 
-  // Build tooltip content
-  var tipEl = null;
-  var activeTooltip = tooltipData || (propsRef.current.tooltipData || null);
-  if (activeTooltip) {
-    var nd = activeTooltip.nd;
+  function buildTipEl(data, pinned) {
+    if (!data) return null;
+    var nd = data.nd;
     var prov = nd.provenance || "directo";
     var provColor = prov === "directo" ? T.positive : prov === "vectorial" ? T.arousal : T.flow;
     var srcLine = null;
@@ -426,19 +453,19 @@ function FibrasChart(props) {
         );
       }
     }
-    tipEl = React.createElement("div", {
+    return React.createElement("div", {
       style: {
         position: "fixed", pointerEvents: "none", zIndex: 100,
-        left: activeTooltip.mx + 14, top: activeTooltip.my - 10,
+        left: data.mx + 14, top: data.my - 10,
         background: T.bgCard,
-        border: "1px solid " + T.borderLight,
+        border: "1px solid " + (pinned ? T.accent : T.borderLight),
         borderRadius: T.radius4, padding: T.pad8,
         fontFamily: T.fontMono, fontSize: T.fs10, color: T.text,
         lineHeight: 1.7, backdropFilter: "blur(2px)", whiteSpace: "nowrap"
       }
     },
       React.createElement("div", { style: { color: T.accent, fontSize: 9, marginBottom: 2 } },
-        activeTooltip.word + " \u00B7 S" + (nd.segIdx + 1)
+        data.word + " \u00B7 S" + (nd.segIdx + 1)
       ),
       React.createElement("div", { style: { color: T.textMid } },
         "Frecuencia ", React.createElement("span", { style: { color: T.text } }, nd.primary !== undefined ? String(Math.round(nd.primary)) : "\u2014")
@@ -458,7 +485,8 @@ function FibrasChart(props) {
       ref: containerRef,
       style: { background: T.bg, borderRadius: T.radius6, border: "1px solid " + T.border, overflow: "hidden" }
     }),
-    tipEl
+    buildTipEl(tooltipData, false),
+    buildTipEl(props.pinnedTooltip, true)
   );
 }
 
@@ -737,6 +765,7 @@ function FibrasDocStack(props) {
   var _ws = useState(0); var winStart = _ws[0], setWinStart = _ws[1];
   var _hw = useState(null); var hoveredWord = _hw[0], setHoveredWord = _hw[1];
   var _td = useState(null); var tooltipData = _td[0], setTooltipData = _td[1];
+  var _pt = useState(null); var pinnedTooltip = _pt[0], setPinnedTooltip = _pt[1];
   var _segTip = useState(null); var segTooltip = _segTip[0], setSegTooltip = _segTip[1];
   var _segPin = useState(null); var segPinned = _segPin[0], setSegPinned = _segPin[1];
 
@@ -825,7 +854,8 @@ function FibrasDocStack(props) {
       lockedWords: lockedWords, toggleLocked: toggleLocked,
       clearLocked: clearLocked,
       enabledEmos: enabledEmos,
-      tooltipData: tooltipData, setTooltipData: setTooltipData
+      tooltipData: tooltipData, setTooltipData: setTooltipData,
+      pinnedTooltip: pinnedTooltip, setPinnedTooltip: setPinnedTooltip
     })
   );
 }
