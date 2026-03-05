@@ -494,13 +494,27 @@ function FibrasMinimap(props) {
           stroke: "rgba(255,255,255,0.25)",
           strokeWidth: 1, strokeDasharray: "3,3"
         }),
-        // Per-segment arousal dashes
+        // Per-segment arousal dashes + labels
         arousalDashes.map(function(d, i) {
-          return React.createElement("line", {
-            key: i,
-            x1: d.x1, x2: d.x2, y1: d.y, y2: d.y,
-            stroke: "white", strokeWidth: 1.5, opacity: 0.8
-          });
+          var elements = [
+            React.createElement("line", {
+              key: "d" + i,
+              x1: d.x1, x2: d.x2, y1: d.y, y2: d.y,
+              stroke: "white", strokeWidth: 1.5, opacity: 0.8
+            })
+          ];
+          if (segW > 14) {
+            elements.push(React.createElement("text", {
+              key: "l" + i,
+              x: i * segW + segW / 2,
+              y: barH - 3,
+              textAnchor: "middle",
+              fontSize: Math.min(9, segW * 0.5),
+              fontFamily: T.fontMono,
+              fill: "rgba(255,255,255,0.35)"
+            }, String(i + 1)));
+          }
+          return elements;
         })
       ),
 
