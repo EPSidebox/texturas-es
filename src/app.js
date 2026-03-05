@@ -1,687 +1,1205 @@
 // ─────────────────────────────────────────────
-// app.js — Texturas (ES) v1.0
-// Main application component — UI in Spanish
-// Reads everything from all modules
+// app.js — Texturas (ES) v2.0
+// State management + tab routing
+// Reads: all modules
+// Exports: Texturas (main component, rendered to #root)
 // ─────────────────────────────────────────────
 
-function patchLayout(n) {
-  if (n <= 1) return [1, 1]; if (n === 2) return [1, 2]; if (n === 3) return [1, 3];
-  if (n === 4) return [2, 2]; if (n <= 6) return [2, 3]; return [3, Math.ceil(n / 3)];
-}
-
-// ── Spanish UI labels ──
+// ── Layer labels (Spanish) ──
 var LAYER_LABELS = {
-  polarity: "Polaridad", emotion: "Emoci\u00F3n", arousal: "Activaci\u00F3n",
-  frequency: "Frecuencia", community: "Comunidad"
+  polarity: "Polaridad",
+  emotion: "Emoci\u00F3n",
+  arousal: "Activaci\u00F3n",
+  frequency: "Frecuencia",
+  community: "Comunidad"
 };
 
+// ── Doc protocol detection ──
+function detectDocProtocol(text) {
+  var re = /---DOC:(.+?)---/g;
+  var m;
+  var markers = [];
+  while ((m = re.exec(text)) !== null) {
+    markers.push({ idx: m.index, label: m[1].trim(), end: m.index + m[0].length });
+  }
+  if (markers.length < 2) return null;
+  var docs = [];
+  for (var i = 0; i < markers.length; i++) {
+    var start = markers[i].end;
+    var end = (i + 1 < markers.length) ? markers[i + 1].idx : text.length;
+    var body = text.substring(start, end).trim();
+    if (body.length > 0) {
+      docs.push({ label: markers[i].label, text: body });
+    }
+  }
+  return docs.length > 0 ? docs : null;
+}
+
+// ── Small number input ──
+function NumInput(props) {
+  var val = props.value, set = props.onChange, mn = props.min, mx = props.max, step = props.step, w = props.width;
+  return React.createElement("input", {
+    type: "number",
+    value: val,
+    min: mn,
+    max: mx,
+    step: step || 1,
+    onChange: function(ev) {
+      var v = parseFloat(ev.target.value);
+      if (!isNaN(v)) set(Math.max(mn, Math.min(mx, v)));
+    },
+    style: {
+      width: w || 50,
+      background: T.bgCard,
+      border: "1px solid " + T.border,
+      borderRadius: T.radius3,
+      color: T.text,
+      padding: "2px 4px",
+      fontSize: T.fs10,
+      fontFamily: T.fontMono,
+      textAlign: "center"
+    }
+  });
+}
+
+// ── Main App ──
 function Texturas() {
-  // ── State ──
-  var _docs = useState([{ id: "d1", label: "Documento 1", text: "" }]); var docs = _docs[0], setDocs = _docs[1];
-  var _aid = useState("d1"); var activeInputDoc = _aid[0], setActiveInputDoc = _aid[1];
-  var _svd = useState(new Set()); var selectedViewDocs = _svd[0], setSelectedViewDocs = _svd[1];
-  var _tab = useState("input"); var tab = _tab[0], setTab = _tab[1];
-  var _topN = useState(25); var topN = _topN[0], setTopN = _topN[1];
-  var _wnD = useState(2); var wnDepth = _wnD[0], setWnDepth = _wnD[1];
-  var _dec = useState(0.5); var decay = _dec[0], setDecay = _dec[1];
-  var _flo = useState("bi"); var flow = _flo[0], setFlow = _flo[1];
-  var _gs = useState(10); var gridSize = _gs[0], setGridSize = _gs[1];
-  var _sc = useState("log"); var scale = _sc[0], setScale = _sc[1];
-  var _ss = useState(true); var showSize = _ss[0], setShowSize = _ss[1];
-  var _sco = useState(false); var showColor = _sco[0], setShowColor = _sco[1];
-  var _sv = useState(false); var showVol = _sv[0], setShowVol = _sv[1];
-  var _fw = useState(new Set()); var filterWords = _fw[0], setFilterWords = _fw[1];
-  var _sb = useState("freq"); var sortBy = _sb[0], setSortBy = _sb[1];
-  var _ng = useState("words"); var ngMode = _ng[0], setNgMode = _ng[1];
-  var _s1c = useState({}); var stage1Cache = _s1c[0], setStage1Cache = _s1c[1];
-  var _pdr = useState({}); var perDocResults = _pdr[0], setPerDocResults = _pdr[1];
-  var _ld = useState(false); var loading = _ld[0], setLoading = _ld[1];
-  var _msg = useState(""); var msg = _msg[0], setMsg = _msg[1];
-  var _es = useState(0); var engSt = _es[0], setEngSt = _es[1];
-  var _sp = useState(false); var showParams = _sp[0], setShowParams = _sp[1];
-  var _vp = useState("channels"); var vellumPage = _vp[0], setVellumPage = _vp[1];
-  var _esl = useState(new Set(EMOTIONS.concat(["center"]))); var enabledSlots = _esl[0], setEnabledSlots = _esl[1];
-  var _pc = useState({}); var pinnedCells = _pc[0], setPinnedCells = _pc[1];
-  var _ws = useState(new Set()); var weaveSeeds = _ws[0], setWeaveSeeds = _ws[1];
-  var _wsi = useState(""); var weaveSeedInput = _wsi[0], setWeaveSeedInput = _wsi[1];
-  var _wsb = useState("freq"); var weaveSortBy = _wsb[0], setWeaveSortBy = _wsb[1];
-  var _ly = useState({ polarity: true, emotion: true, arousal: false, frequency: true, community: true });
-  var layers = _ly[0], setLayers = _ly[1];
-  var _ee = useState(new Set(EMOTIONS)); var enabledEmos = _ee[0], setEnabledEmos = _ee[1];
+  // ── Documents ──
+  var _d = useState([{ id: "doc1", label: "Documento 1", text: "" }]);
+  var docs = _d[0], setDocs = _d[1];
+  var _aid = useState("doc1");
+  var activeInputDoc = _aid[0], setActiveInputDoc = _aid[1];
+  var _sv = useState(["doc1"]);
+  var selectedViewDocs = _sv[0], setSelectedViewDocs = _sv[1];
 
-  var pinFor = useCallback(function(docId) {
-    return function(idx) { setPinnedCells(function(prev) { var n = {}; for (var k in prev) n[k] = prev[k]; n[docId] = idx; return n; }); };
-  }, []);
+  // ── Tab ──
+  var _tab = useState("input");
+  var tab = _tab[0], setTab = _tab[1];
 
-  // ── NLP Engines ──
-  var eng = useRef({ pos: mkPOS(), lem: mkLem(), syn: mkSyn(), sent: mkSent(), vec: mkVec() });
+  // ── Analysis params ──
+  var _topN = useState(25);
+  var topN = _topN[0], setTopN = _topN[1];
+  var _wnD = useState(2);
+  var wnDepth = _wnD[0], setWnDepth = _wnD[1];
+  var _dec = useState(0.5);
+  var decay = _dec[0], setDecay = _dec[1];
+  var _flow = useState("bi");
+  var flow = _flow[0], setFlow = _flow[1];
 
+  // ── Pipeline results ──
+  var _s1c = useState({});
+  var stage1Cache = _s1c[0], setStage1Cache = _s1c[1];
+  var _pdr = useState({});
+  var perDocResults = _pdr[0], setPerDocResults = _pdr[1];
+
+  // ── UI state ──
+  var _ld = useState(false);
+  var loading = _ld[0], setLoading = _ld[1];
+  var _msg = useState("");
+  var msg = _msg[0], setMsg = _msg[1];
+  var _sp = useState(false);
+  var showParams = _sp[0], setShowParams = _sp[1];
+
+  // ── NLP engine ──
+  var _eng = useState({ pos: mkPOS(), lem: mkLem(), syn: mkSyn(), sent: mkSent(), vec: mkVec() });
+  var eng = _eng[0];
+  var _engSt = useState("idle");
+  var engSt = _engSt[0], setEngSt = _engSt[1];
+
+  // ── Seeds ──
+  var _seeds = useState(new Set());
+  var seeds = _seeds[0], setSeeds = _seeds[1];
+  var _si = useState("");
+  var seedInput = _si[0], setSeedInput = _si[1];
+  var _sb = useState("freq");
+  var sortBy = _sb[0], setSortBy = _sb[1];
+
+  // ── N-gram mode ──
+  var _ng = useState(1);
+  var ngMode = _ng[0], setNgMode = _ng[1];
+
+  // ── Locked words (click-to-fix highlighting) ──
+  var _lw = useState(new Set());
+  var lockedWords = _lw[0], setLockedWords = _lw[1];
+
+  // ── Layers ──
+  var _lay = useState({ polarity: true, emotion: true, arousal: false, frequency: true, community: false });
+  var layers = _lay[0], setLayers = _lay[1];
+  var _ee = useState(new Set(["joy", "fear", "sadness", "anger"]));
+  var enabledEmos = _ee[0], setEnabledEmos = _ee[1];
+
+  // ── Fibras ──
+  var _fm = useState("recurrentes");
+  var fibrasMode = _fm[0], setFibrasMode = _fm[1];
+  var _fs = useState(10);
+  var fibrasSegs = _fs[0], setFibrasSegs = _fs[1];
+  var _fc = useState("stack");
+  var fibrasCompare = _fc[0], setFibrasCompare = _fc[1];
+
+  // ── Custom segments per doc ──
+  var _csb = useState({});
+  var customSegsByDoc = _csb[0], setCustomSegsByDoc = _csb[1];
+  var _cm = useState("comunidad");
+  var colorMode = _cm[0], setColorMode = _cm[1];
+
+  // ── Tejido filter ──
+  var _tf = useState(true);
+  var tejidoFilter = _tf[0], setTejidoFilter = _tf[1];
+
+  // ── Load NLP engines on mount ──
   useEffect(function() {
-    var cancelled = false;
-    (function() {
-      var e = eng.current;
-      loadAsset("es-pos", "wordnet/pos-lookup-es.json", false, setMsg).then(function(d) { if (d && !cancelled) e.pos.load(d); });
-      loadAsset("es-lem", "wordnet/lemmatizer-es.json", false, setMsg).then(function(d) { if (d && !cancelled) e.lem.load(d); });
-      loadAsset("es-syn", "wordnet/synsets-es.json", false, setMsg).then(function(d) { if (d && !cancelled) e.syn.load(d); });
-      loadAsset("es-emolex", "lexicons/nrc-emolex-es.json", false, setMsg).then(function(d) { if (d && !cancelled) e.sent.lEl(d); });
-      loadAsset("es-int", "lexicons/nrc-intensity-es.json", false, setMsg).then(function(d) { if (d && !cancelled) e.sent.lInt(d); });
-      loadAsset("es-vad", "lexicons/nrc-vad-es.json", false, setMsg).then(function(d) { if (d && !cancelled) e.sent.lVad(d); });
-      loadAsset("es-swn", "lexicons/sentiwordnet-es.json", false, setMsg).then(function(d) { if (d && !cancelled) e.sent.lSwn(d); });
-      // Load word vectors (split Float16)
-      Promise.all([
-        loadAsset("es-vec-vocab", "vectors/vocab.json", false, setMsg),
-        loadAsset("es-vec-0", "vectors/vectors-0.bin", true, setMsg),
-        loadAsset("es-vec-1", "vectors/vectors-1.bin", true, setMsg)
-      ]).then(function(results) {
-        var vj = results[0], v0 = results[1], v1 = results[2];
-        if (vj && v0 && v1 && !cancelled) {
-          e.vec.load(vj, [v0, v1]);
-        }
-      });
-      setTimeout(function() { if (!cancelled) { setMsg(""); setEngSt(function(s) { return s + 1; }); } }, 500);
-    })();
-    return function() { cancelled = true; };
-  }, []);
+    if (engSt !== "idle") return;
+    setEngSt("loading");
+    setMsg("Cargando recursos NLP...");
 
-  // ── Document management ──
-  var addDoc = function() {
-    var id = "d" + Date.now();
-    setDocs(function(d) { return d.concat([{ id: id, label: "Documento " + (d.length + 1), text: "" }]); });
-    setActiveInputDoc(id);
-  };
-  var rmDoc = function(id) {
-    if (docs.length <= 1) return;
-    setDocs(function(d) { return d.filter(function(x) { return x.id !== id; }); });
-    if (activeInputDoc === id) setActiveInputDoc(docs[0] ? docs[0].id : "d1");
-    setSelectedViewDocs(function(prev) { var n = new Set(prev); n.delete(id); return n; });
-  };
-  var updDoc = function(id, field, val) {
-    setDocs(function(d) { return d.map(function(x) { return x.id === id ? Object.assign({}, x, (function() { var o = {}; o[field] = val; return o; })()) : x; }); });
-  };
-  var handleFiles = function(files) {
-    Array.from(files).forEach(function(f) {
-      if (!f.name.endsWith(".txt")) return;
-      var id = "d" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
-      var reader = new FileReader();
-      reader.onload = function(ev) {
-        setDocs(function(d) {
-          return d.filter(function(x) { return x.text.trim(); }).concat([{ id: id, label: f.name.replace(".txt", ""), text: ev.target.result }]);
-        });
-      };
-      reader.readAsText(f);
+    var statusCb = function(s) { setMsg(s); };
+
+    Promise.all([
+      loadAsset("pos-es", "wordnet/pos-lookup-es.json", false, statusCb),
+      loadAsset("lem-es", "wordnet/lemmatizer-es.json", false, statusCb),
+      loadAsset("syn-es", "wordnet/synsets-es.json", false, statusCb),
+      loadAsset("emolex-es", "lexicons/nrc-emolex-es.json", false, statusCb),
+      loadAsset("intensity-es", "lexicons/nrc-intensity-es.json", false, statusCb),
+      loadAsset("vad-es", "lexicons/nrc-vad-es.json", false, statusCb),
+      loadAsset("swn-es", "lexicons/sentiwordnet-es.json", false, statusCb),
+      loadAsset("vocab-es", "vectors/vocab.json", false, statusCb),
+      loadAsset("vec-0", "vectors/vectors-0.bin", true, statusCb),
+      loadAsset("vec-1", "vectors/vectors-1.bin", true, statusCb)
+    ]).then(function(results) {
+      if (results[0]) eng.pos.load(results[0]);
+      if (results[1]) eng.lem.load(results[1]);
+      if (results[2]) eng.syn.load(results[2]);
+      if (results[3]) eng.sent.lEl(results[3]);
+      if (results[4]) eng.sent.lInt(results[4]);
+      if (results[5]) eng.sent.lVad(results[5]);
+      if (results[6]) eng.sent.lSwn(results[6]);
+      if (results[7] && results[8]) {
+        var bufs = [results[8]];
+        if (results[9]) bufs.push(results[9]);
+        eng.vec.load(results[7], bufs);
+      }
+      setEngSt("ready");
+      setMsg("Listo. " + (eng.vec.isLoaded() ? eng.vec.vocab + " vectores." : "Sin vectores."));
+    }).catch(function(e) {
+      setEngSt("error");
+      setMsg("Error cargando recursos: " + e.message);
     });
-  };
-
-  var validDocs = docs.filter(function(d) { return d.text.trim(); });
-  var analyzedIds = Object.keys(perDocResults);
-  var selectedArr = Array.from(selectedViewDocs).filter(function(id) { return perDocResults[id]; });
-  var isPatchwork = selectedArr.length > 1;
+  }, []);
 
   // ── Analysis ──
-  var runAnalysis = useCallback(function() {
-    if (!validDocs.length) return;
-    setLoading(true); setMsg("Analizando...");
-    setTimeout(function() {
-      var s1 = {}, pdr = {};
-      validDocs.forEach(function(d) {
-        s1[d.id] = analyzeStage1(d.text, eng.current, topN);
-        pdr[d.id] = analyzeStage2(s1[d.id], eng.current, topN, wnDepth, decay, flow);
-      });
-      setStage1Cache(s1); setPerDocResults(pdr);
-      setFilterWords(new Set()); setNgMode("words");
-      setSelectedViewDocs(new Set([validDocs[0].id]));
-      setPinnedCells({}); setLoading(false); setMsg(""); setTab("vellum");
-    }, 50);
-  }, [docs, topN, wnDepth, decay, flow]);
+  function runAnalysis() {
+    if (engSt !== "ready") { setMsg("Esperando recursos NLP..."); return; }
+    setLoading(true);
+    setMsg("Analizando...");
 
-  var rerunStage2 = function(newDecay, newFlow) {
-    var d = newDecay !== undefined ? newDecay : decay;
-    var f = newFlow !== undefined ? newFlow : flow;
-    if (newDecay !== undefined) setDecay(d);
-    if (newFlow !== undefined) setFlow(f);
-    setMsg("Actualizando...");
     setTimeout(function() {
-      var pdr = {};
-      var k;
-      for (k in stage1Cache) {
-        if (stage1Cache.hasOwnProperty(k)) {
-          pdr[k] = analyzeStage2(stage1Cache[k], eng.current, topN, wnDepth, d, f);
+      var newS1 = {};
+      var newResults = {};
+      var newCsb = {};
+      for (var i = 0; i < docs.length; i++) {
+        var d = docs[i];
+        if (!d.text || d.text.trim().length === 0) continue;
+
+        // Strip SEG markers from text before analysis
+        var cleanText = d.text.replace(/---SEG:.+?---/g, "\n\n");
+
+        var s1 = analyzeStage1(cleanText, eng, topN);
+        newS1[d.id] = s1;
+        var s2 = analyzeStage2(s1, eng, topN, wnDepth, decay, flow);
+        newResults[d.id] = s2;
+
+        // Detect custom segments from original text
+        var segProto = detectSegProtocol(d.text);
+        if (segProto) {
+          var boundaries = buildCustomSegBoundaries(d.text, segProto, s2.enriched, eng);
+          newCsb[d.id] = boundaries;
         }
       }
-      setPerDocResults(pdr); setFilterWords(new Set()); setMsg("");
-    }, 10);
-  };
-
-  var rerunTopN = useCallback(function(n) {
-    setTopN(n);
-    if (!validDocs.length) return;
-    setMsg("Actualizando...");
-    setTimeout(function() {
-      var s1 = {}, pdr = {};
-      validDocs.forEach(function(d) {
-        s1[d.id] = analyzeStage1(d.text, eng.current, n);
-        pdr[d.id] = analyzeStage2(s1[d.id], eng.current, n, wnDepth, decay, flow);
-      });
-      setStage1Cache(s1); setPerDocResults(pdr);
-      setFilterWords(new Set()); setNgMode("words"); setMsg("");
+      setStage1Cache(newS1);
+      setPerDocResults(newResults);
+      setCustomSegsByDoc(newCsb);
+      setLoading(false);
+      setMsg("An\u00E1lisis completo.");
+      setTab("fibras");
     }, 50);
-  }, [docs, wnDepth, decay, flow]);
+  }
 
-  var handleDocClick = function(id, ev) {
-    if (ev.ctrlKey || ev.metaKey) {
-      setSelectedViewDocs(function(prev) {
-        var n = new Set(prev);
-        if (n.has(id)) n.delete(id); else n.add(id);
-        if (n.size === 0) n.add(id);
-        return n;
-      });
-    } else setSelectedViewDocs(new Set([id]));
-  };
+  function rerunStage2(newDecay, newFlow) {
+    var d2 = newDecay !== undefined ? newDecay : decay;
+    var f2 = newFlow !== undefined ? newFlow : flow;
+    if (newDecay !== undefined) setDecay(d2);
+    if (newFlow !== undefined) setFlow(f2);
+    var newResults = {};
+    for (var id in stage1Cache) {
+      if (!stage1Cache.hasOwnProperty(id)) continue;
+      newResults[id] = analyzeStage2(stage1Cache[id], eng, topN, wnDepth, d2, f2);
+    }
+    setPerDocResults(newResults);
+  }
 
-  var toggleWeaveSeed = useCallback(function(w) {
-    setWeaveSeeds(function(prev) { var n = new Set(prev); if (n.has(w)) n.delete(w); else n.add(w); return n; });
-  }, []);
+  function rerunTopN(n) {
+    setTopN(n);
+    if (engSt !== "ready") return;
+    var newS1 = {};
+    var newResults = {};
+    for (var i = 0; i < docs.length; i++) {
+      var d = docs[i];
+      if (!d.text || d.text.trim().length === 0) continue;
+      var cleanText = d.text.replace(/---SEG:.+?---/g, "\n\n");
+      var s1 = analyzeStage1(cleanText, eng, n);
+      newS1[d.id] = s1;
+      newResults[d.id] = analyzeStage2(s1, eng, n, wnDepth, decay, flow);
+    }
+    setStage1Cache(newS1);
+    setPerDocResults(newResults);
+  }
 
-  // ── Fibras stream lock ──
-  var _lw = useState(new Set()); var lockedWords = _lw[0], setLockedWords = _lw[1];
+  // ── Doc management ──
+  function handleDocClick(id, ev) {
+    if (ev && ev.ctrlKey) {
+      var cur = selectedViewDocs.slice();
+      var idx = cur.indexOf(id);
+      if (idx >= 0) { cur.splice(idx, 1); }
+      else if (cur.length < 3) { cur.push(id); }
+      setSelectedViewDocs(cur);
+    } else {
+      setSelectedViewDocs([id]);
+    }
+  }
 
-  var toggleLocked = useCallback(function(w) {
-    setLockedWords(function(prev) { var n = new Set(prev); if (n.has(w)) n.delete(w); else n.add(w); return n; });
-  }, []);
+  function addDoc() {
+    var id = "doc" + (docs.length + 1) + "_" + Date.now();
+    setDocs(docs.concat([{ id: id, label: "Documento " + (docs.length + 1), text: "" }]));
+    setActiveInputDoc(id);
+  }
 
-  var clearLocked = useCallback(function() {
-    setLockedWords(new Set());
-  }, []);
+  function removeDoc(id) {
+    if (docs.length <= 1) return;
+    var next = docs.filter(function(d) { return d.id !== id; });
+    setDocs(next);
+    if (activeInputDoc === id) setActiveInputDoc(next[0].id);
+    setSelectedViewDocs(selectedViewDocs.filter(function(sid) { return sid !== id; }));
+  }
 
-  var toggleLayer = function(layer) {
-    setLayers(function(prev) { var n = {}; for (var k in prev) n[k] = prev[k]; n[layer] = !prev[layer]; return n; });
-  };
+  function updateDocText(id, text) {
+    setDocs(docs.map(function(d) { return d.id === id ? { id: d.id, label: d.label, text: text } : d; }));
+  }
 
-  // ── Vellum computed data ──
-  var allVData = useMemo(function() {
-    var out = {};
-    selectedArr.forEach(function(id) {
-      var r = perDocResults[id]; if (!r) return;
-      var ngFM = ngMode === "bigrams" ? r.ng2Map : ngMode === "trigrams" ? r.ng3Map : null;
-      out[id] = vellumBins(r.enriched, gridSize, filterWords, ngMode, ngFM);
+  function updateDocLabel(id, label) {
+    setDocs(docs.map(function(d) { return d.id === id ? { id: d.id, label: label, text: d.text } : d; }));
+  }
+
+  function doSplit() {
+    var activeDoc = null;
+    for (var i = 0; i < docs.length; i++) { if (docs[i].id === activeInputDoc) { activeDoc = docs[i]; break; } }
+    if (!activeDoc) return;
+    var parsed = detectDocProtocol(activeDoc.text);
+    if (!parsed) { setMsg("No se encontr\u00F3 protocolo ---DOC:Nombre---"); return; }
+    var newDocs = parsed.map(function(p, idx) {
+      return { id: "doc_split_" + idx + "_" + Date.now(), label: p.label, text: p.text };
     });
-    return out;
-  }, [perDocResults, selectedArr.join(","), gridSize, filterWords, ngMode]);
+    setDocs(newDocs);
+    setActiveInputDoc(newDocs[0].id);
+    setSelectedViewDocs([newDocs[0].id]);
+    setMsg("Separados " + newDocs.length + " documentos.");
+  }
 
-  var normMaxes = useMemo(function() {
-    var mR = 0, mP = 0, mA = 0;
-    var docId;
-    for (docId in allVData) {
-      if (!allVData.hasOwnProperty(docId)) continue;
-      var vd = allVData[docId];
-      for (var i = 0; i < vd.bins.length; i++) {
-        var b = vd.bins[i];
-        if (!b.empty && !b.dimmed) {
-          mR = Math.max(mR, Math.abs(b.rel));
-          mP = Math.max(mP, Math.abs(b.polarity));
-          mA = Math.max(mA, Math.abs(b.arousal));
+  // ── Seeds ──
+  function toggleSeed(w) {
+    var next = new Set(seeds);
+    if (next.has(w)) next.delete(w);
+    else next.add(w);
+    setSeeds(next);
+  }
+
+  // ── Locked words ──
+  function toggleLocked(w) {
+    var next = new Set(lockedWords);
+    if (next.has(w)) next.delete(w);
+    else next.add(w);
+    setLockedWords(next);
+  }
+
+  function clearLocked() {
+    setLockedWords(new Set());
+  }
+
+  // ── Fibras data (memoized per selected docs) ──
+  var fibrasDataMap = useMemo(function() {
+    var map = {};
+    for (var i = 0; i < selectedViewDocs.length; i++) {
+      var id = selectedViewDocs[i];
+      var res = perDocResults[id];
+      if (!res) continue;
+      var csb = customSegsByDoc[id] || null;
+      map[id] = computeFibras(
+        res.enriched, res.freqMap, res.relevanceMap, eng,
+        seeds, fibrasSegs, fibrasMode, topN, decay,
+        sortBy === "relevance" ? "relevance" : "freq",
+        csb,
+        ngMode
+      );
+    }
+    return map;
+  }, [selectedViewDocs, perDocResults, seeds, fibrasSegs, fibrasMode, topN, decay, sortBy, customSegsByDoc, ngMode]);
+
+  // ── Word list for panel (from fibras data) ──
+  var fibrasWords = useMemo(function() {
+    var id = selectedViewDocs[0];
+    var fd = fibrasDataMap[id];
+    if (!fd) return [];
+    return fd.nodeWords.map(function(w) {
+      return { word: w, freq: fd.freqMap[w] || 0, rel: fd.relevanceMap[w] || 1 };
+    });
+  }, [fibrasDataMap, selectedViewDocs]);
+
+  // ── CommMap and polarity map by doc (for color modes) ──
+  var commMapByDoc = useMemo(function() {
+    var map = {};
+    for (var i = 0; i < selectedViewDocs.length; i++) {
+      var id = selectedViewDocs[i];
+      var res = perDocResults[id];
+      if (!res) continue;
+      if (colorMode === "valencia") {
+        var polMap = {};
+        var polSums = {};
+        var polCounts = {};
+        for (var ti = 0; ti < res.enriched.length; ti++) {
+          var tok = res.enriched[ti];
+          if (tok.stop || tok.polarity === null) continue;
+          if (!polSums[tok.lemma]) { polSums[tok.lemma] = 0; polCounts[tok.lemma] = 0; }
+          polSums[tok.lemma] += tok.polarity;
+          polCounts[tok.lemma] += 1;
         }
+        for (var w in polSums) {
+          if (polSums.hasOwnProperty(w)) {
+            polMap[w] = polSums[w] / polCounts[w];
+          }
+        }
+        map[id] = polMap;
+      } else {
+        map[id] = res.commMap || {};
       }
     }
-    return { rel: mR || 1, polarity: mP || 0.01, arousal: mA || 1 };
-  }, [allVData]);
+    return map;
+  }, [selectedViewDocs, perDocResults, colorMode]);
 
-  // ── Fibras computed data ──
-  var fibrasDataMap = useMemo(function() {
-    var out = {};
-    selectedArr.forEach(function(id) {
-      var r = perDocResults[id]; if (!r) return;
-      out[id] = computeFibras(
-        r.enriched, r.freqMap, r.relevanceMap, eng.current,
-        Array.from(weaveSeeds), gridSize, "recurrentes", topN, decay, sortBy, null, 1
-      );
+  // ── Top words for Tejido panel ──
+  var tejidoWords = useMemo(function() {
+    var id = selectedViewDocs[0];
+    var res = perDocResults[id];
+    if (!res) return [];
+    return res.topWords.map(function(pair) {
+      return { word: pair[0], freq: pair[1], rel: res.relevanceMap[pair[0]] || 1 };
     });
-    return out;
-  }, [perDocResults, selectedArr.join(","), weaveSeeds, gridSize, topN, decay, sortBy]);
+  }, [perDocResults, selectedViewDocs]);
 
-  var commMapByDoc = useMemo(function() {
-    var out = {};
-    selectedArr.forEach(function(id) {
-      var r = perDocResults[id]; if (!r) return;
-      out[id] = r.commMap;
+  // ── Filtered weaveEnriched for Tejido ──
+  var tejidoFilteredSet = useMemo(function() {
+    if (!tejidoFilter) return null;
+    var id = selectedViewDocs[0];
+    var fd = fibrasDataMap[id];
+    if (!fd) return null;
+    var set = {};
+    for (var i = 0; i < fd.nodeWords.length; i++) {
+      set[fd.nodeWords[i]] = true;
+    }
+    return set;
+  }, [tejidoFilter, fibrasDataMap, selectedViewDocs]);
+
+  function filterWeaveEnriched(weaveEnriched, filterSet) {
+    if (!filterSet) return weaveEnriched;
+    return weaveEnriched.map(function(para) {
+      return para.map(function(tok) {
+        if (tok.stop || tok.type === "s" || tok.type === "x") return tok;
+        if (!filterSet[tok.lemma]) {
+          return {
+            surface: tok.surface, lemma: tok.lemma, pos: tok.pos,
+            stop: true, type: tok.type, rel: tok.rel, freq: tok.freq,
+            polarity: tok.polarity, arousal: tok.arousal,
+            emolex: tok.emolex, comm: tok.comm
+          };
+        }
+        return tok;
+      });
     });
-    return out;
-  }, [perDocResults, selectedArr.join(",")]);
+  }
 
-  var e = eng.current;
-  var aC = (showSize ? 1 : 0) + (showColor ? 1 : 0) + (showVol ? 1 : 0);
-  var tS = function() { if (showSize && aC <= 1) return; setShowSize(!showSize); };
-  var tC = function() { if (showColor && aC <= 1) return; setShowColor(!showColor); };
-  var tV = function() { if (showVol && aC <= 1) return; setShowVol(!showVol); };
+  // ── Active doc for text area ──
+  var activeDoc = null;
+  for (var adi = 0; adi < docs.length; adi++) {
+    if (docs[adi].id === activeInputDoc) { activeDoc = docs[adi]; break; }
+  }
 
-  var mainTabs = [
-    { id: "input", l: "Entrada" }, { id: "vellum", l: "Vitela" },
-    { id: "weave", l: "Tejido" }, { id: "fibras", l: "Fibras" },
-    { id: "output", l: "Salida" }
-  ];
-  var rc = patchLayout(selectedArr.length);
-  var rows = rc[0], cols = rc[1];
-  var gridH = isPatchwork ? Math.max(240, Math.min(380, 520 / rows)) : T.contentH;
+  // ── Tab bar style ──
+  var tabBtnStyle = function(t) {
+    return {
+      background: tab === t ? T.accent + "22" : "transparent",
+      border: "1px solid " + (tab === t ? T.accent : T.border),
+      color: tab === t ? T.accent : T.textMid,
+      borderRadius: T.radius4,
+      padding: "6px 16px",
+      fontSize: T.fs12,
+      fontFamily: T.fontMono,
+      cursor: "pointer"
+    };
+  };
 
-  // ── Render ──
-  return (
-    React.createElement("div", { style: { background: T.bg, color: T.text, minHeight: "100vh", fontFamily: T.fontMono, display: "flex", flexDirection: "column" } },
+  // ════════════════════════════════════════════
+  // RENDER
+  // ════════════════════════════════════════════
+  return React.createElement("div", {
+    style: {
+      maxWidth: T.maxWidth,
+      margin: "0 auto",
+      padding: T.pad16,
+      fontFamily: T.fontMono,
+      color: T.text
+    }
+  },
+    // ── Header ──
+    React.createElement("div", {
+      style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: T.gap16 }
+    },
+      React.createElement("h1", {
+        style: { fontSize: T.fs18, color: T.accent, margin: 0, fontWeight: 500 }
+      }, "Texturas"),
+      React.createElement("span", {
+        style: { fontSize: T.fs10, color: T.textDim }
+      }, msg)
+    ),
 
-      // Header
-      React.createElement("div", { style: { padding: "12px 20px", borderBottom: "1px solid " + T.border, display: "flex", alignItems: "center", gap: T.gap12 } },
-        React.createElement("span", { style: { fontSize: T.fs18, color: T.accent, fontWeight: "bold" } }, "\u2B21 Texturas"),
-        React.createElement("span", { style: { fontSize: T.fs11, color: T.textDim } }, "v1.0"),
-        analyzedIds.length > 0 && React.createElement("span", { style: { fontSize: T.fs10, color: T.text, marginLeft: 8 } },
-          "\u25CF " + analyzedIds.length + " doc" + (analyzedIds.length > 1 ? "s" : "")),
-        React.createElement("div", { style: { marginLeft: "auto", display: "flex", gap: 8 } },
-          e.vec.isLoaded() && React.createElement("span", { style: { fontSize: T.fs10, color: T.positive } }, "\u25CF vec"),
-          e.sent.ready && React.createElement("span", { style: { fontSize: T.fs10, color: T.arousal } }, "\u25CF sent"),
-          e.pos.ready && React.createElement("span", { style: { fontSize: T.fs10, color: T.grid } }, "\u25CF nlp"),
-          e.syn.ready && React.createElement("span", { style: { fontSize: T.fs10, color: T.flow } }, "\u25CF wn")
-        )
-      ),
+    // ── Tab bar ──
+    React.createElement("div", {
+      style: { display: "flex", gap: T.gap6, marginBottom: T.gap16 }
+    },
+      React.createElement("button", { onClick: function() { setTab("input"); }, style: tabBtnStyle("input") }, "Importar"),
+      React.createElement("button", { onClick: function() { setTab("fibras"); }, style: tabBtnStyle("fibras") }, "Fibras"),
+      React.createElement("button", { onClick: function() { setTab("weave"); }, style: tabBtnStyle("weave") }, "Tejido"),
+      React.createElement("button", { onClick: function() { setTab("output"); }, style: tabBtnStyle("output") }, "Exportar"),
+      React.createElement("button", { onClick: function() { setTab("about"); }, style: tabBtnStyle("about") }, "Acerca")
+    ),
 
-      // Tab bar
-      React.createElement("div", { style: { display: "flex", borderBottom: "1px solid " + T.border } },
-        mainTabs.filter(function(t) { return t.id !== "about"; }).map(function(t) {
-          return React.createElement("button", {
-            key: t.id, onClick: function() { setTab(t.id); },
-            style: { padding: "10px 14px", background: tab === t.id ? T.bgCard : "transparent",
-              color: tab === t.id ? T.accent : T.textMid, border: "none",
-              borderBottom: tab === t.id ? "2px solid " + T.accent : "2px solid transparent",
-              cursor: "pointer", fontSize: T.fs12, fontFamily: T.fontMono }
-          }, t.l);
-        }),
-        React.createElement("div", { style: { flex: 1 } }),
-        React.createElement("button", {
-          onClick: function() { setTab("about"); },
-          style: { padding: "10px 14px", background: tab === "about" ? T.bgCard : "transparent",
-            color: tab === "about" ? T.accent : T.textMid, border: "none",
-            borderBottom: tab === "about" ? "2px solid " + T.accent : "2px solid transparent",
-            cursor: "pointer", fontSize: T.fs12, fontFamily: T.fontMono }
-        }, "Acerca")
-      ),
-
-      // Doc selector bar
-      (tab === "vellum" || tab === "weave" || tab === "fibras") && analyzedIds.length > 0 && React.createElement("div", {
-        style: { display: "flex", gap: 4, padding: "8px 20px", borderBottom: "1px solid " + T.border, background: T.bgHover, overflowX: "auto", alignItems: "center" }
+    // ════════════════════════════════════════
+    // TAB: IMPORTAR
+    // ════════════════════════════════════════
+    tab === "input" && React.createElement("div", null,
+      // Doc tabs
+      React.createElement("div", {
+        style: { display: "flex", gap: T.gap4, marginBottom: T.gap8, flexWrap: "wrap", alignItems: "center" }
       },
-        analyzedIds.length > 1 && React.createElement("span", { style: { fontSize: 9, color: T.textDim, marginRight: 4 } }, "Ctrl+clic mosaico"),
-        validDocs.filter(function(d) { return perDocResults[d.id]; }).map(function(d) {
-          var sel = selectedViewDocs.has(d.id), tw = perDocResults[d.id] ? perDocResults[d.id].tw : 0;
-          return React.createElement("button", {
-            key: d.id, onClick: function(ev) { handleDocClick(d.id, ev); },
-            style: { padding: "4px 12px", borderRadius: T.radius3,
-              border: "1px solid " + (sel ? T.flow : T.borderLight),
-              background: sel ? T.flow : T.bgCard, color: sel ? T.bg : T.textMid,
-              fontSize: T.fs11, fontFamily: T.fontMono, cursor: "pointer" }
-          }, d.label + " (" + tw.toLocaleString() + ")");
+        docs.map(function(d) {
+          var active = d.id === activeInputDoc;
+          return React.createElement("div", {
+            key: d.id,
+            style: { display: "flex", alignItems: "center", gap: 2 }
+          },
+            React.createElement("button", {
+              onClick: function() { setActiveInputDoc(d.id); },
+              style: {
+                background: active ? T.accent + "22" : T.bgCard,
+                border: "1px solid " + (active ? T.accent : T.border),
+                color: active ? T.accent : T.textMid,
+                borderRadius: T.radius3,
+                padding: "3px 8px",
+                fontSize: T.fs10,
+                fontFamily: T.fontMono,
+                cursor: "pointer"
+              }
+            }, d.label),
+            docs.length > 1 && React.createElement("button", {
+              onClick: function() { removeDoc(d.id); },
+              style: {
+                background: "transparent",
+                border: "none",
+                color: T.textFaint,
+                cursor: "pointer",
+                fontSize: T.fs10,
+                padding: "0 2px"
+              }
+            }, "\u00D7")
+          );
+        }),
+        React.createElement("button", {
+          onClick: addDoc,
+          style: {
+            background: "transparent",
+            border: "1px dashed " + T.borderLight,
+            color: T.textDim,
+            borderRadius: T.radius3,
+            padding: "3px 8px",
+            fontSize: T.fs10,
+            fontFamily: T.fontMono,
+            cursor: "pointer"
+          }
+        }, "+ Doc")
+      ),
+
+      // Label editor
+      activeDoc && React.createElement("div", {
+        style: { marginBottom: T.gap8 }
+      },
+        React.createElement("input", {
+          type: "text",
+          value: activeDoc.label,
+          onChange: function(ev) { updateDocLabel(activeDoc.id, ev.target.value); },
+          style: {
+            background: T.bgCard,
+            border: "1px solid " + T.border,
+            borderRadius: T.radius3,
+            color: T.text,
+            padding: T.pad4,
+            fontSize: T.fs12,
+            fontFamily: T.fontMono,
+            width: 300
+          }
         })
       ),
 
-      // Content area
-      React.createElement("div", { style: { flex: 1, padding: "16px 20px", overflowY: "auto" } },
+      // Text area
+      activeDoc && React.createElement("textarea", {
+        value: activeDoc.text,
+        onChange: function(ev) { updateDocText(activeDoc.id, ev.target.value); },
+        placeholder: "Pega o escribe tu texto en espa\u00F1ol aqu\u00ED...",
+        style: {
+          width: "100%",
+          height: 300,
+          background: T.bgDeep,
+          border: "1px solid " + T.border,
+          borderRadius: T.radius4,
+          color: T.text,
+          padding: T.pad12,
+          fontSize: T.fs13,
+          fontFamily: T.fontMono,
+          resize: "vertical",
+          lineHeight: 1.6
+        }
+      }),
 
-        // ── ENTRADA TAB ──
-        tab === "input" && React.createElement("div", { style: { maxWidth: T.maxWidthNarrow, margin: "0 auto" } },
-          React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: T.gap12 } },
-            React.createElement("span", { style: { fontSize: T.fs13, color: "#aaa" } }, "Documentos (" + docs.length + ")"),
-            React.createElement("button", {
-              onClick: addDoc,
-              style: { padding: "4px 12px", background: T.border, color: T.accent, border: "1px solid " + T.borderMed, borderRadius: T.radius4, fontSize: T.fs12, fontFamily: T.fontMono, cursor: "pointer" }
-            }, "+ A\u00F1adir"),
-            React.createElement("label", {
-              style: { padding: "4px 12px", background: T.border, color: T.flow, border: "1px solid " + T.borderMed, borderRadius: T.radius4, fontSize: T.fs12, fontFamily: T.fontMono, cursor: "pointer" }
-            }, "Subir .txt",
-              React.createElement("input", { type: "file", multiple: true, accept: ".txt", style: { display: "none" }, onChange: function(ev) { handleFiles(ev.target.files); } })
-            )
-          ),
-          // Doc tabs
-          React.createElement("div", { style: { display: "flex", gap: 4, marginBottom: T.gap12, flexWrap: "wrap" } },
-            docs.map(function(d) {
-              return React.createElement("button", {
-                key: d.id, onClick: function() { setActiveInputDoc(d.id); },
-                style: { padding: "5px 12px", borderRadius: T.radius4,
-                  border: "1px solid " + (activeInputDoc === d.id ? T.flow : T.borderLight),
-                  background: activeInputDoc === d.id ? "#1a2a2a" : T.bgCard,
-                  color: activeInputDoc === d.id ? T.flow : T.textMid,
-                  fontSize: T.fs12, fontFamily: T.fontMono, cursor: "pointer" }
-              }, d.label,
-                docs.length > 1 && React.createElement("span", {
-                  onClick: function(ev) { ev.stopPropagation(); rmDoc(d.id); },
-                  style: { marginLeft: 8, color: T.textDim, cursor: "pointer" }
-                }, "\u00D7")
-              );
-            })
-          ),
-          // Active doc editor
-          docs.filter(function(d) { return d.id === activeInputDoc; }).map(function(d) {
-            return React.createElement("div", { key: d.id },
-              React.createElement("input", {
-                type: "text", value: d.label,
-                onChange: function(ev) { updDoc(d.id, "label", ev.target.value); },
-                style: { width: 300, padding: "6px 10px", background: T.bgCard, border: "1px solid " + T.borderMed,
-                  borderRadius: T.radius4, color: T.text, fontSize: T.fs13, fontFamily: T.fontMono, boxSizing: "border-box", marginBottom: 8 }
-              }),
-              React.createElement("textarea", {
-                value: d.text, onChange: function(ev) { updDoc(d.id, "text", ev.target.value); },
-                placeholder: "Pegar texto aqu\u00ED...",
-                style: { width: "100%", height: "calc(100vh - 400px)", background: T.bgDeep,
-                  border: "1px solid " + T.border, borderRadius: T.radius6, color: T.text,
-                  padding: 16, fontSize: T.fs13, fontFamily: T.fontMono, resize: "none",
-                  boxSizing: "border-box", lineHeight: 1.6 }
-              })
-            );
-          }),
-          // Analyze button
-          React.createElement("div", { style: { marginTop: T.gap12, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" } },
-            React.createElement("button", {
-              onClick: function() { setShowParams(!showParams); },
-              style: { padding: "6px 12px", background: T.bgCard, color: T.textMid, border: "1px solid " + T.borderLight, borderRadius: T.radius4, cursor: "pointer", fontSize: T.fs11, fontFamily: T.fontMono }
-            }, "Par\u00E1metros " + (showParams ? "\u25BE" : "\u25B8")),
-            React.createElement("button", {
-              onClick: runAnalysis, disabled: !validDocs.length || loading,
-              style: { padding: "8px 20px",
-                background: validDocs.length && !loading ? T.accent : T.borderLight,
-                color: validDocs.length && !loading ? T.bg : T.textDim,
-                border: "none", borderRadius: T.radius4,
-                cursor: validDocs.length && !loading ? "pointer" : "default",
-                fontFamily: T.fontMono, fontSize: T.fs13, fontWeight: "bold" }
-            }, "Analizar " + validDocs.length + " doc" + (validDocs.length !== 1 ? "s" : "") + " \u2192"),
-            msg && React.createElement("span", { style: { fontSize: T.fs10, color: T.arousal } }, msg)
-          ),
-          showParams && React.createElement("div", {
-            style: { marginTop: 10, padding: 14, background: T.bgCard, borderRadius: T.radius6,
-              border: "1px solid " + T.borderLight, display: "flex", gap: 20, flexWrap: "wrap", alignItems: "flex-end" }
-          },
-            React.createElement("div", null,
-              React.createElement("label", { style: { fontSize: T.fs10, color: T.textMid, display: "block", marginBottom: 3 } }, "Top N: " + topN),
-              React.createElement("input", { type: "range", min: 10, max: 50, value: topN, onChange: function(ev) { setTopN(+ev.target.value); }, style: { width: 100 } })
-            ),
-            React.createElement("div", null,
-              React.createElement("label", { style: { fontSize: T.fs10, color: T.textMid, display: "block", marginBottom: 3 } }, "Prof. WN: " + wnDepth),
-              React.createElement("input", { type: "range", min: 1, max: 3, value: wnDepth, onChange: function(ev) { setWnDepth(+ev.target.value); }, style: { width: 80 } })
-            ),
-            React.createElement("div", null,
-              React.createElement("label", { style: { fontSize: T.fs10, color: T.textMid, display: "block", marginBottom: 3 } }, "Decaimiento: " + decay.toFixed(2)),
-              React.createElement("input", { type: "range", min: 30, max: 80, value: decay * 100, onChange: function(ev) { setDecay(+ev.target.value / 100); }, style: { width: 100 } })
-            )
-          )
-        ),
-
-        // ── VITELA TAB ──
-        tab === "vellum" && selectedArr.length > 0 && React.createElement("div", { style: { maxWidth: T.maxWidth, margin: "0 auto" } },
-          // Toolbar
-          React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: T.gap12, alignItems: "center", height: 36 } },
-            React.createElement("div", { style: { display: "flex", gap: 0, border: "1px solid " + T.borderLight, borderRadius: T.radius4, overflow: "hidden" } },
-              React.createElement("button", { onClick: function() { setVellumPage("channels"); },
-                style: { padding: "5px 11px", background: vellumPage === "channels" ? T.accent : T.bgCard, color: vellumPage === "channels" ? T.bg : T.textDim, border: "none", cursor: "pointer", fontSize: T.fs11, fontFamily: T.fontMono, fontWeight: vellumPage === "channels" ? "bold" : "normal" } }, "\u25C9 Canales"),
-              React.createElement("button", { onClick: function() { setVellumPage("emotions"); },
-                style: { padding: "5px 11px", background: vellumPage === "emotions" ? T.emotion : T.bgCard, color: vellumPage === "emotions" ? T.bg : T.textDim, border: "none", cursor: "pointer", fontSize: T.fs11, fontFamily: T.fontMono, fontWeight: vellumPage === "emotions" ? "bold" : "normal" } }, "\u25C9 Emociones")
-            ),
-            React.createElement("div", { style: { width: 1, height: 22, background: T.borderLight } }),
-            React.createElement("div", { style: { display: "flex", gap: 0, border: "1px solid " + T.borderLight, borderRadius: T.radius4, overflow: "hidden" } },
-              ["linear", "log"].map(function(m) {
-                return React.createElement("button", { key: m, onClick: function() { setScale(m); },
-                  style: { padding: "5px 11px", background: scale === m ? T.accent : T.bgCard, color: scale === m ? T.bg : T.textDim, border: "none", cursor: "pointer", fontSize: T.fs11, fontFamily: T.fontMono, fontWeight: scale === m ? "bold" : "normal" } }, m);
-              })
-            ),
-            React.createElement("div", { style: { width: 1, height: 22, background: T.borderLight } }),
-            React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5, width: 145, flexShrink: 0, justifyContent: vellumPage === "channels" ? "flex-start" : "flex-end" } },
-              vellumPage === "channels" && React.createElement("button", { onClick: tS,
-                style: { padding: "5px 10px", background: showSize ? "#0d2a28" : T.bgCard, color: showSize ? T.accent : T.textDim, border: "1px solid " + (showSize ? T.accentDim : T.borderLight), borderRadius: T.radius4, cursor: showSize && aC <= 1 ? "not-allowed" : "pointer", fontSize: T.fs11, fontFamily: T.fontMono, opacity: showSize && aC <= 1 ? 0.5 : 1 } }, "Frec/Rel"),
-              vellumPage === "channels"
-                ? React.createElement("button", { onClick: tC,
-                    style: { padding: "5px 10px", background: showColor ? "#1a2a2a" : T.bgCard, color: showColor ? T.positive : T.textDim, border: "1px solid " + (showColor ? T.positive + "44" : T.borderLight), borderRadius: T.radius4, cursor: showColor && aC <= 1 ? "not-allowed" : "pointer", fontSize: T.fs11, fontFamily: T.fontMono, opacity: showColor && aC <= 1 ? 0.5 : 1 } }, "Polaridad")
-                : React.createElement(EmoToggle, { enabledSlots: enabledSlots, setEnabledSlots: setEnabledSlots })
-            ),
-            React.createElement("div", { style: { marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" } },
-              React.createElement("button", { onClick: vellumPage === "channels" ? tV : function() { setShowVol(!showVol); },
-                style: { padding: "5px 10px", background: showVol ? "#2a2a1a" : T.bgCard, color: showVol ? T.arousal : T.textDim, border: "1px solid " + (showVol ? T.arousal + "44" : T.borderLight), borderRadius: T.radius4, cursor: vellumPage === "channels" && showVol && aC <= 1 ? "not-allowed" : "pointer", fontSize: T.fs11, fontFamily: T.fontMono, opacity: vellumPage === "channels" && showVol && aC <= 1 ? 0.5 : 1 } }, "Activaci\u00F3n"),
-              React.createElement("div", { style: { width: 1, height: 22, background: T.borderLight } }),
-              React.createElement("div", { style: { display: "flex", gap: 0, border: "1px solid " + T.borderLight, borderRadius: T.radius4, overflow: "hidden" } },
-                [["bi", "Bi"], ["up", "\u2191"], ["down", "\u2193"]].map(function(p) {
-                  return React.createElement("button", { key: p[0], onClick: function() { rerunStage2(undefined, p[0]); },
-                    style: { padding: "5px 9px", background: flow === p[0] ? T.flow : T.bgCard, color: flow === p[0] ? T.bg : T.textDim, border: "none", cursor: "pointer", fontSize: T.fs11, fontFamily: T.fontMono } }, p[1]);
-                })
-              ),
-              React.createElement("div", { style: { width: 1, height: 22, background: T.borderLight } }),
-              React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5 } },
-                React.createElement("span", { style: { fontSize: T.fs10, color: T.textDim } }, "N:"),
-                React.createElement("input", { type: "range", min: 10, max: 50, value: topN, onChange: function(ev) { rerunTopN(+ev.target.value); }, style: { width: 60 } }),
-                React.createElement("span", { style: { fontSize: T.fs10, color: "#aaa", width: 16 } }, topN)
-              ),
-              React.createElement("div", { style: { width: 1, height: 22, background: T.borderLight } }),
-              React.createElement("div", { style: { display: "flex", gap: 0, border: "1px solid " + T.borderLight, borderRadius: T.radius4, overflow: "hidden" } },
-                [10, 20, 30].map(function(g) {
-                  return React.createElement("button", { key: g, onClick: function() { setGridSize(g); },
-                    style: { padding: "5px 11px", background: gridSize === g ? T.grid : T.bgCard, color: gridSize === g ? T.bg : T.textDim, border: "none", cursor: "pointer", fontSize: T.fs11, fontFamily: T.fontMono, fontWeight: gridSize === g ? "bold" : "normal" } }, g + "\u00B2");
-                })
-              ),
-              isPatchwork && React.createElement("span", { style: { fontSize: T.fs10, color: T.emotion, marginLeft: 4 } }, "mosaico")
-            )
-          ),
-          React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "stretch" } },
-            React.createElement("div", { style: { flex: 1, minWidth: 0, overflow: "hidden" } },
-              React.createElement("div", { style: { height: gridH } },
-                selectedArr[0] && allVData[selectedArr[0]] && (
-                  vellumPage === "channels"
-                    ? React.createElement(VellumGrid, { bins: allVData[selectedArr[0]].bins, scale: scale, showSize: showSize, showColor: showColor, showVol: showVol, gridSize: gridSize, normMaxes: normMaxes, label: analyzedIds.length > 1 ? docs.find(function(d) { return d.id === selectedArr[0]; }).label : null, ngMode: ngMode, topNWords: perDocResults[selectedArr[0]].topWords, pinnedIdx: pinnedCells[selectedArr[0]] != null ? pinnedCells[selectedArr[0]] : null, onPin: pinFor(selectedArr[0]) })
-                    : React.createElement(VellumEmoGrid, { bins: allVData[selectedArr[0]].bins, scale: scale, showVol: showVol, gridSize: gridSize, normMaxes: normMaxes, label: analyzedIds.length > 1 ? docs.find(function(d) { return d.id === selectedArr[0]; }).label : null, enabledSlots: enabledSlots, topNWords: perDocResults[selectedArr[0]].topWords, pinnedIdx: pinnedCells[selectedArr[0]] != null ? pinnedCells[selectedArr[0]] : null, onPin: pinFor(selectedArr[0]) })
-                )
-              )
-            ),
-            React.createElement("div", { style: { width: T.wordPanelW, flexShrink: 0, maxHeight: gridH, display: "flex", flexDirection: "column" } },
-              React.createElement("div", { style: { fontSize: T.fs10, color: T.textMid, marginBottom: 3 } }, "Top " + topN + " \u00B7 clic para filtrar"),
-              React.createElement(VellumWordPanel, { perDocData: perDocResults, selectedDocIds: selectedArr, filterWords: filterWords, setFilterWords: setFilterWords, sortBy: sortBy, setSortBy: setSortBy, topN: topN, ngMode: ngMode, setNgMode: setNgMode })
-            )
-          )
-        ),
-        tab === "vellum" && !selectedArr.length && React.createElement("div", { style: { color: T.textDim, textAlign: "center", marginTop: 80, fontSize: T.fs13 } }, "\u2190 A\u00F1adir documentos en Entrada, luego clic en Analizar."),
-
-        // ── TEJIDO TAB ──
-        tab === "weave" && selectedArr.length > 0 && React.createElement("div", { style: { maxWidth: T.maxWidth, margin: "0 auto" } },
-          React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: T.gap12, alignItems: "center", flexWrap: "wrap" } },
-            Object.keys(LAYER_CFG).map(function(lk) {
-              var cfg = LAYER_CFG[lk]; var on = layers[lk];
-              return React.createElement("button", {
-                key: lk, onClick: function() { toggleLayer(lk); },
-                style: { padding: "5px 10px", background: on ? cfg.color + "22" : T.bgCard,
-                  color: on ? cfg.color : T.textDim,
-                  border: "1px solid " + (on ? cfg.color + "44" : T.borderLight),
-                  borderRadius: T.radius4, cursor: "pointer", fontSize: T.fs11, fontFamily: T.fontMono }
-              }, LAYER_LABELS[lk] || cfg.label);
-            }),
-            layers.emotion && React.createElement(EmoToggle, { enabledSlots: enabledEmos, setEnabledSlots: setEnabledEmos }),
-            React.createElement("div", { style: { marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" } },
-              React.createElement("div", { style: { display: "flex", gap: 0, border: "1px solid " + T.borderLight, borderRadius: T.radius4, overflow: "hidden" } },
-                [["bi", "Bi"], ["up", "\u2191"], ["down", "\u2193"]].map(function(p) {
-                  return React.createElement("button", { key: p[0], onClick: function() { rerunStage2(undefined, p[0]); },
-                    style: { padding: "5px 9px", background: flow === p[0] ? T.flow : T.bgCard, color: flow === p[0] ? T.bg : T.textDim, border: "none", cursor: "pointer", fontSize: T.fs11, fontFamily: T.fontMono } }, p[1]);
-                })
-              ),
-              React.createElement("span", { style: { fontSize: T.fs10, color: T.textDim } }, "decaimiento:"),
-              React.createElement("input", { type: "range", min: 30, max: 80, value: decay * 100,
-                onChange: function(ev) { rerunStage2(+ev.target.value / 100, undefined); }, style: { width: 60 } }),
-              React.createElement("span", { style: { fontSize: T.fs10, color: "#aaa" } }, decay.toFixed(2))
-            )
-          ),
-          React.createElement("div", { style: { display: "flex", gap: 10 } },
-            React.createElement("div", { style: { flex: 1, minWidth: 0 } },
-              perDocResults[selectedArr[0]] && perDocResults[selectedArr[0]].weaveEnriched
-                ? React.createElement(WeaveReader, {
-                    weaveEnriched: perDocResults[selectedArr[0]].weaveEnriched,
-                    layers: layers, freqMap: perDocResults[selectedArr[0]].freqMap,
-                    maxFreq: perDocResults[selectedArr[0]].maxFreq,
-                    relevanceMap: perDocResults[selectedArr[0]].relevanceMap,
-                    maxRel: perDocResults[selectedArr[0]].maxRel,
-                    commMap: perDocResults[selectedArr[0]].commMap,
-                    enabledEmos: enabledEmos,
-                    onWordClick: toggleWeaveSeed
-                  })
-                : React.createElement("div", { style: { height: T.contentH, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: T.radius6, border: "1px solid " + T.border, background: T.bgDeep } },
-                    React.createElement("span", { style: { color: T.textDim, fontSize: T.fs12 } }, "Analizar documentos primero."))
-            ),
-            React.createElement("div", { style: { width: T.wordPanelW, flexShrink: 0, maxHeight: T.contentH, display: "flex", flexDirection: "column" } },
-              React.createElement(WeaveWordPanel, {
-                perDocData: perDocResults, selectedDocIds: selectedArr,
-                weaveSeeds: weaveSeeds, toggleWeaveSeed: toggleWeaveSeed,
-                weaveSeedInput: weaveSeedInput, setWeaveSeedInput: setWeaveSeedInput,
-                setWeaveSeeds: setWeaveSeeds, weaveSortBy: weaveSortBy, setWeaveSortBy: setWeaveSortBy
-              })
-            )
-          )
-        ),
-        tab === "weave" && !selectedArr.length && React.createElement("div", { style: { color: T.textDim, textAlign: "center", marginTop: 80, fontSize: T.fs13 } }, "\u2190 Analizar documentos primero."),
-
-        // ── FIBRAS TAB ──
-        tab === "fibras" && selectedArr.length > 0 && React.createElement("div", { style: { maxWidth: T.maxWidth, margin: "0 auto" } },
-          // Toolbar
-          React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: T.gap8, alignItems: "center" } },
-            React.createElement("span", { style: { fontSize: T.fs10, color: T.textDim } },
-              "Semillas: ", React.createElement("span", { style: { color: T.accent } }, weaveSeeds.size)),
-            e.vec.isLoaded() && React.createElement("span", { style: { fontSize: T.fs10, color: T.positive } }, "\u25CF vec"),
-            React.createElement("div", { style: { marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" } },
-              React.createElement("div", { style: { display: "flex", gap: 0, border: "1px solid " + T.borderLight, borderRadius: T.radius4, overflow: "hidden" } },
-                [10, 20, 30].map(function(g) {
-                  return React.createElement("button", { key: g, onClick: function() { setGridSize(g); },
-                    style: { padding: "5px 11px", background: gridSize === g ? T.grid : T.bgCard, color: gridSize === g ? T.bg : T.textDim, border: "none", cursor: "pointer", fontSize: T.fs11, fontFamily: T.fontMono, fontWeight: gridSize === g ? "bold" : "normal" } }, g + " seg");
-                })
-              ),
-              React.createElement("div", { style: { width: 1, height: 22, background: T.borderLight } }),
-              React.createElement("span", { style: { fontSize: T.fs10, color: T.textDim } }, "decaimiento:"),
-              React.createElement("input", { type: "range", min: 30, max: 80, value: decay * 100,
-                onChange: function(ev) { rerunStage2(+ev.target.value / 100, undefined); }, style: { width: 60 } }),
-              React.createElement("span", { style: { fontSize: T.fs10, color: "#aaa" } }, decay.toFixed(2)),
-              React.createElement("div", { style: { width: 1, height: 22, background: T.borderLight } }),
-              React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5 } },
-                React.createElement("span", { style: { fontSize: T.fs10, color: T.textDim } }, "N:"),
-                React.createElement("input", { type: "range", min: 10, max: 50, value: topN, onChange: function(ev) { rerunTopN(+ev.target.value); }, style: { width: 60 } }),
-                React.createElement("span", { style: { fontSize: T.fs10, color: "#aaa", width: 16 } }, topN)
-              )
-            )
-          ),
-          // FibrasMultiDoc
-          React.createElement("div", { style: { display: "flex", gap: 10 } },
-            React.createElement("div", { style: { flex: 1, minWidth: 0 } },
-              React.createElement(FibrasMultiDoc, {
-                selectedArr: selectedArr,
-                fibrasDataMap: fibrasDataMap,
-                seedArr: new Set(Array.from(weaveSeeds)),
-                enabledEmos: enabledEmos,
-                docs: docs,
-                compareMode: selectedArr.length > 1 ? "stack" : "single",
-                sortMode: sortBy,
-                colorMode: "comunidad",
-                lockedWords: lockedWords,
-                toggleLocked: toggleLocked,
-                clearLocked: clearLocked,
-                commMapByDoc: commMapByDoc,
-                canvasW: 800, canvasH: 500,
-                eng: eng.current
-              })
-            ),
-            React.createElement("div", { style: { width: T.wordPanelW, flexShrink: 0, maxHeight: T.contentH, display: "flex", flexDirection: "column" } },
-              React.createElement(WeaveWordPanel, {
-                perDocData: perDocResults, selectedDocIds: selectedArr,
-                weaveSeeds: weaveSeeds, toggleWeaveSeed: toggleWeaveSeed,
-                weaveSeedInput: weaveSeedInput, setWeaveSeedInput: setWeaveSeedInput,
-                setWeaveSeeds: setWeaveSeeds, weaveSortBy: weaveSortBy, setWeaveSortBy: setWeaveSortBy
-              })
-            )
-          )
-        ),
-        tab === "fibras" && !selectedArr.length && React.createElement("div", { style: { color: T.textDim, textAlign: "center", marginTop: 80, fontSize: T.fs13 } }, "\u2190 Analizar documentos primero."),
-
-        // ── SALIDA TAB ──
-        tab === "output" && React.createElement("div", { style: { maxWidth: T.maxWidthNarrow, margin: "0 auto" } },
-          React.createElement("h3", { style: { color: T.accent, fontSize: T.fs15, fontWeight: "normal", marginBottom: T.gap16 } }, "Exportar"),
-          analyzedIds.length === 0
-            ? React.createElement("p", { style: { color: T.textDim, fontSize: T.fs13 } }, "Analizar documentos primero.")
-            : React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: T.gap8 } },
-                validDocs.filter(function(d) { return perDocResults[d.id]; }).map(function(d) {
-                  var r = perDocResults[d.id];
-                  return React.createElement("div", {
-                    key: d.id,
-                    style: { padding: T.pad12, background: T.bgCard, borderRadius: T.radius6, border: "1px solid " + T.border }
-                  },
-                    React.createElement("div", { style: { fontSize: T.fs12, color: T.text, marginBottom: T.gap8 } }, d.label),
-                    React.createElement("div", { style: { display: "flex", gap: T.gap8, flexWrap: "wrap" } },
-                      React.createElement("button", {
-                        onClick: function() { dlFile(genTEI(d.label, r), d.label + ".xml", "application/xml"); },
-                        style: { padding: "6px 14px", background: T.bgDeep, color: T.accent, border: "1px solid " + T.borderLight, borderRadius: T.radius4, cursor: "pointer", fontSize: T.fs11, fontFamily: T.fontMono }
-                      }, "TEI XML"),
-                      React.createElement("button", {
-                        onClick: function() { dlFile(genCSV(d.label, r), d.label + ".csv", "text/csv"); },
-                        style: { padding: "6px 14px", background: T.bgDeep, color: T.flow, border: "1px solid " + T.borderLight, borderRadius: T.radius4, cursor: "pointer", fontSize: T.fs11, fontFamily: T.fontMono }
-                      }, "CSV"),
-                      React.createElement("button", {
-                        onClick: function() { dlFile(genReport(d.label, r), d.label + "-informe.md", "text/markdown"); },
-                        style: { padding: "6px 14px", background: T.bgDeep, color: T.emotion, border: "1px solid " + T.borderLight, borderRadius: T.radius4, cursor: "pointer", fontSize: T.fs11, fontFamily: T.fontMono }
-                      }, "Informe (.md)")
-                    )
-                  );
-                }),
-                analyzedIds.length > 1 && React.createElement("div", {
-                  style: { padding: T.pad12, background: T.bgCard, borderRadius: T.radius6, border: "1px solid " + T.accent + "44", marginTop: T.gap8 }
-                },
-                  React.createElement("div", { style: { fontSize: T.fs12, color: T.accent, marginBottom: T.gap8 } }, "Corpus completo (" + analyzedIds.length + " docs)"),
-                  React.createElement("button", {
-                    onClick: function() {
-                      var corpusDocs = validDocs.filter(function(d) { return perDocResults[d.id]; });
-                      dlFile(genCorpusTEI(corpusDocs, perDocResults), "texturas-corpus.xml", "application/xml");
-                    },
-                    style: { padding: "6px 14px", background: T.bgDeep, color: T.accent, border: "1px solid " + T.borderLight, borderRadius: T.radius4, cursor: "pointer", fontSize: T.fs11, fontFamily: T.fontMono }
-                  }, "TEI Corpus XML")
-                ),
-                React.createElement("div", {
-                  style: { padding: T.pad12, background: T.bgCard, borderRadius: T.radius6, border: "1px solid " + T.border, marginTop: T.gap16 }
-                },
-                  React.createElement("div", { style: { fontSize: T.fs12, color: T.textMid, marginBottom: T.gap8 } }, "Importar TEI"),
-                  React.createElement("label", {
-                    style: { padding: "6px 14px", background: T.bgDeep, color: T.grid, border: "1px solid " + T.borderLight, borderRadius: T.radius4, cursor: "pointer", fontSize: T.fs11, fontFamily: T.fontMono, display: "inline-block" }
-                  }, "Subir TEI XML",
-                    React.createElement("input", {
-                      type: "file", accept: ".xml,.tei", style: { display: "none" },
-                      onChange: function(ev) {
-                        var file = ev.target.files[0];
-                        if (!file) return;
-                        var reader = new FileReader();
-                        reader.onload = function(e) {
-                          var parsed = parseTEIImport(e.target.result);
-                          if (parsed.error) { setMsg(parsed.error); return; }
-                          if (parsed.docs && parsed.docs.length > 0) {
-                            var newDocs = parsed.docs.map(function(d, i) {
-                              return { id: "d" + Date.now() + "_" + i, label: d.label, text: d.text };
-                            });
-                            setDocs(function(prev) { return prev.filter(function(d) { return d.text.trim(); }).concat(newDocs); });
-                            setActiveInputDoc(newDocs[0].id);
-                            setTab("input");
-                            setMsg("Importados " + newDocs.length + " documento" + (newDocs.length > 1 ? "s" : ""));
-                          }
-                        };
-                        reader.readAsText(file);
-                      }
-                    })
-                  )
-                )
-              )
-        ),
-
-        // ── ACERCA TAB ──
-        tab === "about" && React.createElement("div", { style: { maxWidth: T.maxWidthNarrow, margin: "0 auto", marginTop: 20 } },
-          React.createElement("h2", { style: { color: T.accent, fontWeight: "normal", fontSize: T.fs18, marginBottom: T.gap16 } }, "\u2B21 Texturas v1.0"),
-          React.createElement("p", { style: { color: T.textMid, lineHeight: 1.6, marginBottom: T.gap12 } },
-            "An\u00E1lisis textual multicapa correlacionado para textos en espa\u00F1ol."),
-          React.createElement("p", { style: { color: T.textMid, lineHeight: 1.6, marginBottom: T.gap12 } },
-            "Creado por Ernesto Pe\u00F1a, Northeastern University."),
-          React.createElement("p", { style: { color: T.textDim, lineHeight: 1.6, fontSize: T.fs11 } },
-            "Pipeline NLP para espa\u00F1ol: NRC VAD (polaridad), NRC EmoLex (emoci\u00F3n), SentiWordNet v\u00EDa OMW (synsets), lematizador spaCy. Contenido completo de Acerca pr\u00F3ximamente en Fase 4.")
+      // Split button
+      React.createElement("div", {
+        style: { marginTop: T.gap8, display: "flex", gap: T.gap8, alignItems: "center" }
+      },
+        React.createElement("button", {
+          onClick: doSplit,
+          style: {
+            background: "transparent",
+            border: "1px solid " + T.borderLight,
+            color: T.textMid,
+            borderRadius: T.radius3,
+            padding: "4px 10px",
+            fontSize: T.fs10,
+            fontFamily: T.fontMono,
+            cursor: "pointer"
+          }
+        }, "Separar (---DOC:---)"),
+        React.createElement("span", { style: { fontSize: 9, color: T.textFaint } },
+          "Usa ---DOC:Nombre--- para separar m\u00FAltiples documentos"
         )
+      ),
+
+      // Parameters
+      React.createElement("div", { style: { marginTop: T.gap16 } },
+        React.createElement("button", {
+          onClick: function() { setShowParams(!showParams); },
+          style: {
+            background: "transparent",
+            border: "1px solid " + T.borderLight,
+            color: T.textMid,
+            borderRadius: T.radius3,
+            padding: "4px 10px",
+            fontSize: T.fs10,
+            fontFamily: T.fontMono,
+            cursor: "pointer",
+            marginBottom: T.gap8
+          }
+        }, showParams ? "Ocultar par\u00E1metros" : "Par\u00E1metros"),
+
+        showParams && React.createElement("div", {
+          style: {
+            display: "grid",
+            gridTemplateColumns: "auto 1fr",
+            gap: T.gap8,
+            alignItems: "center",
+            padding: T.pad12,
+            background: T.bgCard,
+            border: "1px solid " + T.border,
+            borderRadius: T.radius4,
+            maxWidth: 400
+          }
+        },
+          React.createElement("span", { style: { fontSize: T.fs10, color: T.textMid } }, "Top N:"),
+          React.createElement(NumInput, { value: topN, onChange: setTopN, min: 10, max: 100, width: 60 }),
+
+          React.createElement("span", { style: { fontSize: T.fs10, color: T.textMid } }, "WordNet depth:"),
+          React.createElement(NumInput, { value: wnDepth, onChange: setWnDepth, min: 1, max: 3, width: 60 }),
+
+          React.createElement("span", { style: { fontSize: T.fs10, color: T.textMid } }, "Decay:"),
+          React.createElement(NumInput, { value: decay, onChange: setDecay, min: 0.1, max: 0.9, step: 0.1, width: 60 }),
+
+          React.createElement("span", { style: { fontSize: T.fs10, color: T.textMid } }, "Flujo:"),
+          React.createElement("div", { style: { display: "flex", gap: T.gap4 } },
+            ["bi", "up", "down"].map(function(f) {
+              var label = f === "bi" ? "Bi" : f === "up" ? "\u2191" : "\u2193";
+              return React.createElement("button", {
+                key: f,
+                onClick: function() { setFlow(f); },
+                style: {
+                  background: flow === f ? T.accent + "22" : "transparent",
+                  border: "1px solid " + (flow === f ? T.accent : T.border),
+                  color: flow === f ? T.accent : T.textDim,
+                  borderRadius: T.radius3,
+                  padding: "2px 8px",
+                  fontSize: T.fs10,
+                  fontFamily: T.fontMono,
+                  cursor: "pointer"
+                }
+              }, label);
+            })
+          )
+        )
+      ),
+
+      // Analyze button
+      React.createElement("div", { style: { marginTop: T.gap16 } },
+        React.createElement("button", {
+          onClick: runAnalysis,
+          disabled: loading || engSt !== "ready",
+          style: {
+            background: T.accent,
+            border: "none",
+            color: T.bg,
+            borderRadius: T.radius4,
+            padding: "8px 24px",
+            fontSize: T.fs13,
+            fontFamily: T.fontMono,
+            fontWeight: 500,
+            cursor: loading ? "wait" : "pointer",
+            opacity: loading || engSt !== "ready" ? 0.5 : 1
+          }
+        }, loading ? "Analizando..." : "Analizar")
+      )
+    ),
+
+    // ════════════════════════════════════════
+    // TAB: FIBRAS
+    // ════════════════════════════════════════
+    tab === "fibras" && React.createElement("div", null,
+      // Controls — Row 1: Mode + Color + Emotions
+      React.createElement("div", {
+        style: {
+          display: "flex", gap: T.gap12, alignItems: "center",
+          marginBottom: T.gap6, flexWrap: "wrap"
+        }
+      },
+        // Mode selector
+        React.createElement("div", { style: { display: "flex", gap: T.gap4 } },
+          [
+            { key: "semillas", label: "Semillas" },
+            { key: "recurrentes", label: "Recurrentes" },
+            { key: "persistentes", label: "Persistentes" }
+          ].map(function(m) {
+            var active = fibrasMode === m.key;
+            return React.createElement("button", {
+              key: m.key,
+              onClick: function() { setFibrasMode(m.key); },
+              style: {
+                background: active ? T.accent + "22" : "transparent",
+                border: "1px solid " + (active ? T.accent : T.border),
+                color: active ? T.accent : T.textDim,
+                borderRadius: T.radius3,
+                padding: "3px 8px",
+                fontSize: T.fs10,
+                fontFamily: T.fontMono,
+                cursor: "pointer"
+              }
+            }, m.label);
+          })
+        ),
+
+        // Color mode selector
+        React.createElement("div", { style: { display: "flex", gap: T.gap4, alignItems: "center" } },
+          React.createElement("span", { style: { fontSize: 9, color: T.textDim } }, "Color:"),
+          ["comunidad", "valencia", "rango"].map(function(cm) {
+            var active = colorMode === cm;
+            var label = cm === "comunidad" ? "Com" : cm === "valencia" ? "Pol" : "Rng";
+            return React.createElement("button", {
+              key: cm,
+              onClick: function() { setColorMode(cm); },
+              style: {
+                background: active ? T.accent + "22" : "transparent",
+                border: "1px solid " + (active ? T.accent : T.border),
+                color: active ? T.accent : T.textDim,
+                borderRadius: T.radius3,
+                padding: "2px 6px",
+                fontSize: 9,
+                fontFamily: T.fontMono,
+                cursor: "pointer"
+              }
+            }, label);
+          })
+        ),
+
+        // Emotion toggle
+        React.createElement(EmoToggle4, { enabledEmos: enabledEmos, setEnabledEmos: setEnabledEmos })
+      ),
+
+      // Controls — Row 2: Seg + Decay + N + Flow + Compare
+      React.createElement("div", {
+        style: {
+          display: "flex", gap: T.gap12, alignItems: "center",
+          marginBottom: T.gap12, flexWrap: "wrap"
+        }
+      },
+        // Segments
+        (function() {
+          var activeDocId = selectedViewDocs[0];
+          var hasCustom = customSegsByDoc[activeDocId] && customSegsByDoc[activeDocId].length > 0;
+          var customCount = hasCustom ? customSegsByDoc[activeDocId].length : 0;
+          return React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 4 } },
+            React.createElement("span", { style: { fontSize: 9, color: T.textDim } }, "Seg:"),
+            hasCustom
+              ? React.createElement("span", {
+                  style: { fontSize: 9, color: T.accent, fontFamily: T.fontMono }
+                }, customCount + " (custom)")
+              : React.createElement(NumInput, { value: fibrasSegs, onChange: setFibrasSegs, min: 3, max: 50, width: 45 })
+          );
+        })(),
+
+        // Decay
+        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 4 } },
+          React.createElement("span", { style: { fontSize: 9, color: T.textDim } }, "Dec:"),
+          React.createElement("input", {
+            type: "range",
+            min: 0.1,
+            max: 0.9,
+            step: 0.1,
+            value: decay,
+            onChange: function(ev) { rerunStage2(parseFloat(ev.target.value)); },
+            style: { width: 60 }
+          }),
+          React.createElement("span", { style: { fontSize: 9, color: T.textMid } }, decay.toFixed(1))
+        ),
+
+        // TopN
+        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 4 } },
+          React.createElement("span", { style: { fontSize: 9, color: T.textDim } }, "N:"),
+          React.createElement(NumInput, { value: topN, onChange: rerunTopN, min: 10, max: 100, width: 45 })
+        ),
+
+        // Flow direction
+        React.createElement("div", { style: { display: "flex", gap: T.gap4, alignItems: "center" } },
+          React.createElement("span", { style: { fontSize: 9, color: T.textDim } }, "Flujo:"),
+          ["bi", "up", "down"].map(function(f) {
+            var label = f === "bi" ? "Bi" : f === "up" ? "\u2191" : "\u2193";
+            return React.createElement("button", {
+              key: f,
+              onClick: function() { rerunStage2(undefined, f); },
+              style: {
+                background: flow === f ? T.accent + "22" : "transparent",
+                border: "1px solid " + (flow === f ? T.accent : T.border),
+                color: flow === f ? T.accent : T.textDim,
+                borderRadius: T.radius3,
+                padding: "2px 6px",
+                fontSize: 9,
+                fontFamily: T.fontMono,
+                cursor: "pointer"
+              }
+            }, label);
+          })
+        ),
+
+        // Compare mode (if multiple docs)
+        selectedViewDocs.length > 1 && React.createElement("div", { style: { display: "flex", gap: T.gap4 } },
+          ["stack", "overlay"].map(function(cm) {
+            var label = cm === "stack" ? "Apilar" : "Superponer";
+            var active = fibrasCompare === cm;
+            return React.createElement("button", {
+              key: cm,
+              onClick: function() { setFibrasCompare(cm); },
+              style: {
+                background: active ? T.accent + "22" : "transparent",
+                border: "1px solid " + (active ? T.accent : T.border),
+                color: active ? T.accent : T.textDim,
+                borderRadius: T.radius3,
+                padding: "2px 6px",
+                fontSize: 9,
+                fontFamily: T.fontMono,
+                cursor: "pointer"
+              }
+            }, label);
+          })
+        )
+      ),
+
+      // Doc selector
+      docs.length > 1 && React.createElement("div", {
+        style: { display: "flex", gap: T.gap4, marginBottom: T.gap8 }
+      },
+        docs.map(function(d) {
+          var sel = selectedViewDocs.indexOf(d.id) >= 0;
+          return React.createElement("button", {
+            key: d.id,
+            onClick: function(ev) { handleDocClick(d.id, ev); },
+            style: {
+              background: sel ? T.accent + "22" : T.bgCard,
+              border: "1px solid " + (sel ? T.accent : T.border),
+              color: sel ? T.accent : T.textDim,
+              borderRadius: T.radius3,
+              padding: "2px 8px",
+              fontSize: T.fs10,
+              fontFamily: T.fontMono,
+              cursor: "pointer"
+            }
+          }, d.label);
+        }),
+        React.createElement("span", { style: { fontSize: 9, color: T.textFaint, alignSelf: "center" } }, "Ctrl+clic: multi")
+      ),
+
+      // Main content: WordPanel + FibrasMultiDoc
+      React.createElement("div", {
+        style: { display: "flex", gap: T.gap12 }
+      },
+        React.createElement(WordPanel, {
+          words: fibrasWords,
+          seeds: seeds,
+          toggleSeed: toggleSeed,
+          seedInput: seedInput,
+          setSeedInput: setSeedInput,
+          setSeeds: setSeeds,
+          sortBy: sortBy,
+          setSortBy: setSortBy,
+          ngMode: ngMode,
+          setNgMode: setNgMode,
+          freqMap: perDocResults[selectedViewDocs[0]] ? perDocResults[selectedViewDocs[0]].freqMap : {},
+          maxFreq: perDocResults[selectedViewDocs[0]] ? perDocResults[selectedViewDocs[0]].maxFreq : 1,
+          maxRel: perDocResults[selectedViewDocs[0]] ? perDocResults[selectedViewDocs[0]].maxRel : 1
+        }),
+
+        React.createElement(FibrasMultiDoc, {
+          selectedArr: selectedViewDocs,
+          fibrasDataMap: fibrasDataMap,
+          seedArr: seeds,
+          enabledEmos: enabledEmos,
+          docs: docs,
+          compareMode: fibrasCompare,
+          sortMode: sortBy === "relevance" ? "relevance" : "freq",
+          colorMode: colorMode,
+          lockedWords: lockedWords,
+          toggleLocked: toggleLocked,
+          clearLocked: clearLocked,
+          commMapByDoc: commMapByDoc,
+          canvasW: T.maxWidth - T.wordPanelW - T.gap12 * 2,
+          canvasH: T.contentH,
+          eng: eng
+        })
+      )
+    ),
+
+    // ════════════════════════════════════════
+    // TAB: TEJIDO
+    // ════════════════════════════════════════
+    tab === "weave" && React.createElement("div", null,
+      // Mode selector + filter toggle
+      React.createElement("div", {
+        style: { display: "flex", gap: T.gap8, marginBottom: T.gap8, alignItems: "center", flexWrap: "wrap" }
+      },
+        React.createElement("div", { style: { display: "flex", gap: T.gap4 } },
+          [
+            { key: "semillas", label: "Semillas" },
+            { key: "recurrentes", label: "Recurrentes" },
+            { key: "persistentes", label: "Persistentes" }
+          ].map(function(m) {
+            var active = fibrasMode === m.key;
+            return React.createElement("button", {
+              key: m.key,
+              onClick: function() { setFibrasMode(m.key); },
+              style: {
+                background: active ? T.accent + "22" : "transparent",
+                border: "1px solid " + (active ? T.accent : T.border),
+                color: active ? T.accent : T.textDim,
+                borderRadius: T.radius3,
+                padding: "3px 8px",
+                fontSize: T.fs10,
+                fontFamily: T.fontMono,
+                cursor: "pointer"
+              }
+            }, m.label);
+          })
+        ),
+
+        React.createElement("button", {
+          onClick: function() { setTejidoFilter(!tejidoFilter); },
+          style: {
+            background: tejidoFilter ? T.accent + "22" : "transparent",
+            border: "1px solid " + (tejidoFilter ? T.accent : T.borderLight),
+            color: tejidoFilter ? T.accent : T.textDim,
+            borderRadius: T.radius3,
+            padding: "3px 8px",
+            fontSize: T.fs10,
+            fontFamily: T.fontMono,
+            cursor: "pointer"
+          }
+        }, tejidoFilter ? "Filtro activo" : "Mostrar todo")
+      ),
+
+      // Layer toggles
+      React.createElement("div", {
+        style: { display: "flex", gap: T.gap8, marginBottom: T.gap12, flexWrap: "wrap", alignItems: "center" }
+      },
+        Object.keys(LAYER_LABELS).map(function(lk) {
+          var on = layers[lk];
+          var cfg = LAYER_CFG[lk];
+          return React.createElement("button", {
+            key: lk,
+            onClick: function() {
+              var next = {};
+              for (var k in layers) { if (layers.hasOwnProperty(k)) next[k] = layers[k]; }
+              next[lk] = !on;
+              setLayers(next);
+            },
+            style: {
+              background: on ? cfg.color + "22" : "transparent",
+              border: "1px solid " + (on ? cfg.color : T.borderLight),
+              color: on ? cfg.color : T.textDim,
+              borderRadius: T.radius3,
+              padding: "3px 10px",
+              fontSize: T.fs10,
+              fontFamily: T.fontMono,
+              cursor: "pointer"
+            }
+          }, LAYER_LABELS[lk]);
+        }),
+        React.createElement(EmoToggle4, { enabledEmos: enabledEmos, setEnabledEmos: setEnabledEmos }),
+
+        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 4 } },
+          React.createElement("span", { style: { fontSize: 9, color: T.textDim } }, "Dec:"),
+          React.createElement("input", {
+            type: "range", min: 0.1, max: 0.9, step: 0.1, value: decay,
+            onChange: function(ev) { rerunStage2(parseFloat(ev.target.value)); },
+            style: { width: 60 }
+          }),
+          React.createElement("span", { style: { fontSize: 9, color: T.textMid } }, decay.toFixed(1))
+        ),
+
+        React.createElement("div", { style: { display: "flex", gap: T.gap4 } },
+          ["bi", "up", "down"].map(function(f) {
+            var label = f === "bi" ? "Bi" : f === "up" ? "\u2191" : "\u2193";
+            return React.createElement("button", {
+              key: f,
+              onClick: function() { rerunStage2(undefined, f); },
+              style: {
+                background: flow === f ? T.accent + "22" : "transparent",
+                border: "1px solid " + (flow === f ? T.accent : T.border),
+                color: flow === f ? T.accent : T.textDim,
+                borderRadius: T.radius3,
+                padding: "2px 8px",
+                fontSize: T.fs10,
+                fontFamily: T.fontMono,
+                cursor: "pointer"
+              }
+            }, label);
+          })
+        )
+      ),
+
+      // Doc selector
+      docs.length > 1 && React.createElement("div", {
+        style: { display: "flex", gap: T.gap4, marginBottom: T.gap8 }
+      },
+        docs.map(function(d) {
+          var sel = selectedViewDocs.indexOf(d.id) >= 0;
+          return React.createElement("button", {
+            key: d.id,
+            onClick: function(ev) { handleDocClick(d.id, ev); },
+            style: {
+              background: sel ? T.accent + "22" : T.bgCard,
+              border: "1px solid " + (sel ? T.accent : T.border),
+              color: sel ? T.accent : T.textDim,
+              borderRadius: T.radius3,
+              padding: "2px 8px",
+              fontSize: T.fs10,
+              fontFamily: T.fontMono,
+              cursor: "pointer"
+            }
+          }, d.label);
+        })
+      ),
+
+      // Content: WordPanel + WeaveReader
+      React.createElement("div", {
+        style: { display: "flex", gap: T.gap12 }
+      },
+        React.createElement(WordPanel, {
+          words: tejidoWords,
+          seeds: seeds,
+          toggleSeed: toggleSeed,
+          seedInput: seedInput,
+          setSeedInput: setSeedInput,
+          setSeeds: setSeeds,
+          sortBy: sortBy,
+          setSortBy: setSortBy,
+          freqMap: perDocResults[selectedViewDocs[0]] ? perDocResults[selectedViewDocs[0]].freqMap : {},
+          maxFreq: perDocResults[selectedViewDocs[0]] ? perDocResults[selectedViewDocs[0]].maxFreq : 1,
+          maxRel: perDocResults[selectedViewDocs[0]] ? perDocResults[selectedViewDocs[0]].maxRel : 1
+        }),
+
+        React.createElement("div", { style: { flex: 1 } },
+          selectedViewDocs.map(function(docId) {
+            var res = perDocResults[docId];
+            if (!res) return null;
+            var weData = tejidoFilteredSet
+              ? filterWeaveEnriched(res.weaveEnriched, tejidoFilteredSet)
+              : res.weaveEnriched;
+            return React.createElement(WeaveReader, {
+              key: docId,
+              weaveEnriched: weData,
+              layers: layers,
+              freqMap: res.freqMap,
+              maxFreq: res.maxFreq,
+              relevanceMap: res.relevanceMap,
+              maxRel: res.maxRel,
+              commMap: res.commMap,
+              enabledEmos: enabledEmos,
+              onWordClick: toggleSeed
+            });
+          })
+        )
+      )
+    ),
+
+    // ════════════════════════════════════════
+    // TAB: EXPORTAR
+    // ════════════════════════════════════════
+    tab === "output" && React.createElement("div", null,
+      React.createElement("div", {
+        style: { display: "flex", flexDirection: "column", gap: T.gap12 }
+      },
+        docs.map(function(d) {
+          var res = perDocResults[d.id];
+          if (!res) return null;
+          return React.createElement("div", {
+            key: d.id,
+            style: {
+              padding: T.pad12,
+              background: T.bgCard,
+              border: "1px solid " + T.border,
+              borderRadius: T.radius4
+            }
+          },
+            React.createElement("div", {
+              style: { fontSize: T.fs12, color: T.accent, marginBottom: T.gap8 }
+            }, d.label),
+            React.createElement("div", {
+              style: { display: "flex", gap: T.gap8, flexWrap: "wrap" }
+            },
+              React.createElement("button", {
+                onClick: function() { dlFile(genTEI(d.label, res), d.label + ".xml", "application/xml"); },
+                style: {
+                  background: "transparent", border: "1px solid " + T.borderLight,
+                  color: T.textMid, borderRadius: T.radius3, padding: "4px 10px",
+                  fontSize: T.fs10, fontFamily: T.fontMono, cursor: "pointer"
+                }
+              }, "TEI XML"),
+              React.createElement("button", {
+                onClick: function() { dlFile(genCSV(d.label, res), d.label + ".csv", "text/csv"); },
+                style: {
+                  background: "transparent", border: "1px solid " + T.borderLight,
+                  color: T.textMid, borderRadius: T.radius3, padding: "4px 10px",
+                  fontSize: T.fs10, fontFamily: T.fontMono, cursor: "pointer"
+                }
+              }, "CSV"),
+              React.createElement("button", {
+                onClick: function() { dlFile(genReport(d.label, res), d.label + "-informe.md", "text/markdown"); },
+                style: {
+                  background: "transparent", border: "1px solid " + T.borderLight,
+                  color: T.textMid, borderRadius: T.radius3, padding: "4px 10px",
+                  fontSize: T.fs10, fontFamily: T.fontMono, cursor: "pointer"
+                }
+              }, "Informe MD")
+            )
+          );
+        }),
+
+        Object.keys(perDocResults).length > 1 && React.createElement("button", {
+          onClick: function() { dlFile(genCorpusTEI(docs, perDocResults), "texturas-corpus.xml", "application/xml"); },
+          style: {
+            background: "transparent", border: "1px solid " + T.borderLight,
+            color: T.textMid, borderRadius: T.radius3, padding: "4px 10px",
+            fontSize: T.fs10, fontFamily: T.fontMono, cursor: "pointer", alignSelf: "flex-start"
+          }
+        }, "Corpus TEI (todos)"),
+
+        React.createElement("div", {
+          style: { marginTop: T.gap16 }
+        },
+          React.createElement("div", {
+            style: { fontSize: T.fs10, color: T.textDim, marginBottom: T.gap4 }
+          }, "Importar TEI:"),
+          React.createElement("input", {
+            type: "file",
+            accept: ".xml",
+            onChange: function(ev) {
+              var file = ev.target.files[0];
+              if (!file) return;
+              var reader = new FileReader();
+              reader.onload = function(e) {
+                var result = parseTEIImport(e.target.result);
+                if (result.error) { setMsg(result.error); return; }
+                if (result.docs) {
+                  var newDocs = result.docs.map(function(d, i) {
+                    return { id: "tei_" + i + "_" + Date.now(), label: d.label, text: d.text };
+                  });
+                  setDocs(newDocs);
+                  setActiveInputDoc(newDocs[0].id);
+                  setSelectedViewDocs([newDocs[0].id]);
+                  setMsg("Importados " + newDocs.length + " documento(s) desde TEI.");
+                  setTab("input");
+                }
+              };
+              reader.readAsText(file);
+            },
+            style: {
+              fontSize: T.fs10,
+              fontFamily: T.fontMono,
+              color: T.textMid
+            }
+          })
+        )
+      )
+    ),
+
+    // ════════════════════════════════════════
+    // TAB: ACERCA
+    // ════════════════════════════════════════
+    tab === "about" && React.createElement("div", {
+      style: {
+        maxWidth: T.maxWidthNarrow,
+        padding: T.pad16,
+        color: T.textMid,
+        fontSize: T.fs12,
+        lineHeight: 1.8
+      }
+    },
+      React.createElement("h2", { style: { color: T.accent, fontSize: T.fs15, marginBottom: T.gap12 } }, "Texturas v2.0"),
+      React.createElement("p", null,
+        "Herramienta de an\u00E1lisis textual multicapa para textos en espa\u00F1ol. ",
+        "Combina frecuencia, relevancia sem\u00E1ntica (WordNet), polaridad (NRC VAD), ",
+        "emociones (NRC EmoLex), activaci\u00F3n y comunidades l\u00E9xicas (Louvain)."
+      ),
+      React.createElement("p", null,
+        "Desarrollado por Ernesto Pe\u00F1a. Northeastern University."
+      ),
+      React.createElement("p", { style: { fontSize: T.fs10, color: T.textDim } },
+        "Sin modelos neuronales. Sin transformers. Cada m\u00E9trica es determinista, ",
+        "auditable y reproducible."
       )
     )
   );
 }
 
 // ── Mount ──
-ReactDOM.render(React.createElement(Texturas), document.getElementById("root"));
+ReactDOM.render(
+  React.createElement(Texturas),
+  document.getElementById("root")
+);
