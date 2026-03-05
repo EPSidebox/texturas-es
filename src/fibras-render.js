@@ -143,10 +143,6 @@ function FibrasChart(props) {
   var _tt = useState(null);
   var tooltipData = _tt[0], setTooltipData = _tt[1];
 
-  // Locked word state (stream highlight)
-  var _lw = useState(null);
-  var lockedWi = _lw[0], setLockedWi = _lw[1];
-
   useEffect(function() {
     if (!containerRef.current || !propsRef.current.layout) return;
     if (p5Ref.current) { p5Ref.current.remove(); p5Ref.current = null; }
@@ -361,7 +357,9 @@ function FibrasChart(props) {
             var dx = mx - cx, dy = my - cy;
             if (dx * dx + dy * dy < HIT * HIT) {
               found = slot.word;
-              foundData = { word: slot.word, nd: nd, mx: p.mouseX, my: p.mouseY };
+              // Use page coordinates for fixed tooltip positioning
+              var rect = containerRef.current.getBoundingClientRect();
+              foundData = { word: slot.word, nd: nd, mx: p.mouseX + rect.left, my: p.mouseY + rect.top };
               break outer;
             }
           }
@@ -377,7 +375,6 @@ function FibrasChart(props) {
         var mx = p.mouseX, my = p.mouseY;
         if (mx < 0 || mx > lay.canvasW || my < 0 || my > lay.canvasH) return;
         var HIT = 7;
-        // Hide tooltip on any click
         if (propsRef.current.setTooltipData) propsRef.current.setTooltipData(null);
         outer: for (var wi = 0; wi < lay.wordSlots.length; wi++) {
           var slot = lay.wordSlots[wi];
@@ -409,8 +406,9 @@ function FibrasChart(props) {
 
   // Build tooltip content
   var tipEl = null;
-  if (tooltipData) {
-    var nd = tooltipData.nd;
+  var activeTooltip = tooltipData || (propsRef.current.tooltipData || null);
+  if (activeTooltip) {
+    var nd = activeTooltip.nd;
     var prov = nd.provenance || "directo";
     var provColor = prov === "directo" ? T.positive : prov === "vectorial" ? T.arousal : T.flow;
     var srcLine = null;
@@ -431,7 +429,7 @@ function FibrasChart(props) {
     tipEl = React.createElement("div", {
       style: {
         position: "fixed", pointerEvents: "none", zIndex: 100,
-        left: tooltipData.mx + 14, top: tooltipData.my - 10,
+        left: activeTooltip.mx + 14, top: activeTooltip.my - 10,
         background: T.bgCard,
         border: "1px solid " + T.borderLight,
         borderRadius: T.radius4, padding: T.pad8,
@@ -440,7 +438,7 @@ function FibrasChart(props) {
       }
     },
       React.createElement("div", { style: { color: T.accent, fontSize: 9, marginBottom: 2 } },
-        tooltipData.word + " \u00B7 S" + (nd.segIdx + 1)
+        activeTooltip.word + " \u00B7 S" + (nd.segIdx + 1)
       ),
       React.createElement("div", { style: { color: T.textMid } },
         "Frecuencia ", React.createElement("span", { style: { color: T.text } }, nd.primary !== undefined ? String(Math.round(nd.primary)) : "\u2014")
@@ -522,7 +520,6 @@ function FibrasMinimap(props) {
     return { x1: i * segW + 2, x2: (i + 1) * segW - 2, y: y };
   });
 
-  // Tooltip
   var tipEl = null;
   if (tipData && tipData.seg >= 0 && tipData.seg < numSegs) {
     var pol = segPolarity[tipData.seg] || 0;
