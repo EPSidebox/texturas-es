@@ -102,30 +102,23 @@ function _drawRibbon(p, sT, sB, sR, tT, tB, tL, getColor, steps) {
   var baseCp = (tL - sR) / 3;
   var cpT = baseCp + Math.abs(tT - sT) * 0.4;
   var cpB = baseCp + Math.abs(tB - sB) * 0.4;
-
   p.noStroke();
   for (var si = 0; si < steps; si++) {
     var t0 = si / steps, t1 = (si + 1) / steps, tMid = (t0 + t1) / 2;
-
     var x0  = p.bezierPoint(sR, sR + cpT, tL - cpT, tL, t0);
     var x1  = p.bezierPoint(sR, sR + cpT, tL - cpT, tL, t1);
     var x0b = p.bezierPoint(sR, sR + cpB, tL - cpB, tL, t0);
     var x1b = p.bezierPoint(sR, sR + cpB, tL - cpB, tL, t1);
-
     var y0t = p.bezierPoint(sT, sT, tT, tT, t0);
     var y1t = p.bezierPoint(sT, sT, tT, tT, t1);
     var y0b = p.bezierPoint(sB, sB, tB, tB, t0);
     var y1b = p.bezierPoint(sB, sB, tB, tB, t1);
-
     var lo0 = Math.min(y0t, y0b), hi0 = Math.max(y0t, y0b);
     var lo1 = Math.min(y1t, y1b), hi1 = Math.max(y1t, y1b);
-
     p.fill(getColor(tMid));
     p.beginShape();
-    p.vertex(x0,  lo0);
-    p.vertex(x1,  lo1);
-    p.vertex(x1b, hi1);
-    p.vertex(x0b, hi0);
+    p.vertex(x0,  lo0); p.vertex(x1,  lo1);
+    p.vertex(x1b, hi1); p.vertex(x0b, hi0);
     p.endShape(p.CLOSE);
   }
 }
@@ -135,13 +128,26 @@ function _drawRibbon(p, sT, sB, sR, tT, tB, tL, getColor, steps) {
 // ════════════════════════════════════════════
 function FibrasChart(props) {
   var containerRef = useRef(null);
-  var p5Ref = useRef(null);
-  var propsRef = useRef(props);
+  var p5Ref        = useRef(null);
+  var propsRef     = useRef(props);
   propsRef.current = props;
 
-  // Tooltip state — transient only, no pinning
-  var _tt = useState(null);
-  var tooltipData = _tt[0], setTooltipData = _tt[1];
+  // ── All interactive state lives HERE, inside FibrasChart ──
+  // This keeps hover fast — no prop chain, no React re-render on every mouse move.
+
+  // hoveredStream: word whose stream is highlighted (ribbon hover)
+  var _hs = useState(null); var hoveredStream = _hs[0], setHoveredStream = _hs[1];
+  // hoveredNode: {wi, ni} — the single node being hovered
+  var _hn = useState(null); var hoveredNode = _hn[0], setHoveredNode = _hn[1];
+  // tooltipData: transient tooltip shown on node hover
+  var _tt = useState(null); var tooltipData = _tt[0], setTooltipData = _tt[1];
+  // pinnedTooltip: persistent tooltip shown on node click
+  var _pt = useState(null); var pinnedTooltip = _pt[0], setPinnedTooltip = _pt[1];
+
+  // Refs so P5 sketch can read/write state without closure staleness
+  var hoveredStreamRef = useRef(null);
+  var hoveredNodeRef   = useRef(null);
+  var pinnedTooltipRef = useRef(null);
 
   useEffect(function() {
     if (!containerRef.current || !propsRef.current.layout) return;
@@ -159,17 +165,20 @@ function FibrasChart(props) {
       };
 
       p.draw = function() {
-        var lay = propsRef.current.layout;
-        var hWord = propsRef.current.hoveredWord;
-        var hoveredStream = propsRef.current.hoveredStream;
+        var lay    = propsRef.current.layout;
         var locked = propsRef.current.lockedWords;
         if (!lay) return;
 
-        var hasHL = !!(hoveredStream || (locked && locked.size > 0));
+        var hs = hoveredStreamRef.current;
+        var hn = hoveredNodeRef.current;
+        var pt = pinnedTooltipRef.current;
+
+        // Stream is highlighted if: ribbon hover OR locked
+        var hasHL = !!(hs || (locked && locked.size > 0));
 
         function isWordActive(w) {
           if (!hasHL) return true;
-          if (w === hoveredStream) return true;
+          if (w === hs) return true;
           if (locked && locked.has(w)) return true;
           if (propsRef.current.seeds && propsRef.current.seeds.has(w)) return true;
           return false;
@@ -177,9 +186,8 @@ function FibrasChart(props) {
 
         p.background(17);
 
-        // ── Vertical guidelines ──
-        p.stroke(255, 255, 255, 0.20);
-        p.strokeWeight(1);
+        // Guidelines
+        p.stroke(255, 255, 255, 0.20); p.strokeWeight(1);
         for (var gi = 0; gi < lay.columns.length; gi++) {
           p.line(lay.columns[gi].x, 0, lay.columns[gi].x, lay.canvasH);
         }
@@ -188,82 +196,58 @@ function FibrasChart(props) {
         // ── Streams: back-to-front ──
         for (var wi = lay.wordSlots.length - 1; wi >= 0; wi--) {
           var slot = lay.wordSlots[wi];
-          var rgb = _hexToRgb(slot.color);
+          var rgb  = _hexToRgb(slot.color);
           var active = isWordActive(slot.word);
 
-          // ── Ribbon links ──
+          // Ribbons
           for (var ci = 0; ci < lay.numCols - 1; ci++) {
             var src = slot.nodes[ci];
             var tgt = slot.nodes[ci + 1];
 
-            // Fade out: src real, tgt ghost
             if (src.isReal && !tgt.isReal) {
               var isCrossSrc = false;
               for (var xci = 0; xci < lay.crossLinks.length; xci++) {
-                if (lay.crossLinks[xci].srcSlotIdx === wi && lay.crossLinks[xci].srcCol === ci) {
-                  isCrossSrc = true; break;
-                }
+                if (lay.crossLinks[xci].srcSlotIdx === wi && lay.crossLinks[xci].srcCol === ci) { isCrossSrc = true; break; }
               }
               if (!isCrossSrc) {
-                var ghostX  = tgt.x;
-                var ghostCy = tgt.y + (slot.slotH / 2);
-                var ghostH  = Math.max(2, src.h * 0.3);
-                var ghostT  = ghostCy - ghostH / 2;
-                var ghostB  = ghostCy + ghostH / 2;
-                var srcOp   = active ? src.opacity : 0.06;
-                (function(src, ghostT, ghostB, ghostX, rgb, srcOp) {
-                  _drawRibbon(p,
-                    src.y, src.y + src.h, src.x + src.w,
-                    ghostT, ghostB, ghostX,
-                    function(t) { return p.color(rgb[0], rgb[1], rgb[2], srcOp * (1 - t)); },
-                    16
-                  );
-                })(src, ghostT, ghostB, ghostX, rgb, srcOp);
+                var gX = tgt.x, gCy = tgt.y + (slot.slotH / 2), gH = Math.max(2, src.h * 0.3);
+                var gT = gCy - gH / 2, gB = gCy + gH / 2;
+                var sOp = active ? src.opacity : 0.06;
+                (function(src, gT, gB, gX, rgb, sOp) {
+                  _drawRibbon(p, src.y, src.y + src.h, src.x + src.w, gT, gB, gX,
+                    function(t) { return p.color(rgb[0], rgb[1], rgb[2], sOp * (1 - t)); }, 16);
+                })(src, gT, gB, gX, rgb, sOp);
               }
               continue;
             }
 
-            // Fade in: src ghost, tgt real
             if (!src.isReal && tgt.isReal) {
               var isCrossTgt = false;
               for (var xcj = 0; xcj < lay.crossLinks.length; xcj++) {
-                if (lay.crossLinks[xcj].tgtSlotIdx === wi && lay.crossLinks[xcj].tgtCol === ci + 1) {
-                  isCrossTgt = true; break;
-                }
+                if (lay.crossLinks[xcj].tgtSlotIdx === wi && lay.crossLinks[xcj].tgtCol === ci + 1) { isCrossTgt = true; break; }
               }
               if (!isCrossTgt) {
-                var ghostX2  = src.x + src.w;
-                var ghostCy2 = src.y + (slot.slotH / 2);
-                var ghostH2  = Math.max(2, tgt.h * 0.3);
-                var ghostT2  = ghostCy2 - ghostH2 / 2;
-                var ghostB2  = ghostCy2 + ghostH2 / 2;
-                var tgtOp    = active ? tgt.opacity : 0.06;
-                (function(tgt, ghostT2, ghostB2, ghostX2, rgb, tgtOp) {
-                  _drawRibbon(p,
-                    ghostT2, ghostB2, ghostX2,
-                    tgt.y, tgt.y + tgt.h, tgt.x,
-                    function(t) { return p.color(rgb[0], rgb[1], rgb[2], tgtOp * t); },
-                    16
-                  );
-                })(tgt, ghostT2, ghostB2, ghostX2, rgb, tgtOp);
+                var gX2 = src.x + src.w, gCy2 = src.y + (slot.slotH / 2), gH2 = Math.max(2, tgt.h * 0.3);
+                var gT2 = gCy2 - gH2 / 2, gB2 = gCy2 + gH2 / 2;
+                var tOp = active ? tgt.opacity : 0.06;
+                (function(tgt, gT2, gB2, gX2, rgb, tOp) {
+                  _drawRibbon(p, gT2, gB2, gX2, tgt.y, tgt.y + tgt.h, tgt.x,
+                    function(t) { return p.color(rgb[0], rgb[1], rgb[2], tOp * t); }, 16);
+                })(tgt, gT2, gB2, gX2, rgb, tOp);
               }
               continue;
             }
 
             if (!src.isReal || !tgt.isReal) continue;
             (function(src, tgt, rgb, active) {
-              var srcOp = active ? src.opacity : 0.06;
-              var tgtOp = active ? tgt.opacity : 0.06;
-              _drawRibbon(p,
-                src.y, src.y + src.h, src.x + src.w,
-                tgt.y, tgt.y + tgt.h, tgt.x,
-                function(t) { return p.color(rgb[0], rgb[1], rgb[2], srcOp + (tgtOp - srcOp) * t); },
-                16
-              );
+              var sOp = active ? src.opacity : 0.06;
+              var tOp = active ? tgt.opacity : 0.06;
+              _drawRibbon(p, src.y, src.y + src.h, src.x + src.w, tgt.y, tgt.y + tgt.h, tgt.x,
+                function(t) { return p.color(rgb[0], rgb[1], rgb[2], sOp + (tOp - sOp) * t); }, 16);
             })(src, tgt, rgb, active);
           }
 
-          // ── Nodes ──
+          // Nodes
           for (var ni = 0; ni < slot.nodes.length; ni++) {
             var nd = slot.nodes[ni];
             if (!nd.isReal) continue;
@@ -273,65 +257,53 @@ function FibrasChart(props) {
             p.rect(nd.x, nd.y, nd.w, nd.h);
           }
 
-          // ── Labels ──
+          // Labels
           if (active || !hasHL) {
-            p.textSize(9);
-            p.textAlign(p.RIGHT, p.CENTER);
+            p.textSize(9); p.textAlign(p.RIGHT, p.CENTER);
             p.fill(p.color(180, 180, 180, active ? 0.85 : 0.15));
             p.noStroke();
             for (var lci = 0; lci < slot.labelCols.length; lci++) {
               var ln = slot.nodes[slot.labelCols[lci]];
-              if (ln && ln.isReal) {
-                p.text(slot.word, ln.x - 4, ln.y + ln.h / 2);
-              }
+              if (ln && ln.isReal) p.text(slot.word, ln.x - 4, ln.y + ln.h / 2);
             }
           }
         }
 
-        // ── Cross-stream links ──
+        // Cross-stream links
         if (lay.crossLinks) {
           for (var cli = 0; cli < lay.crossLinks.length; cli++) {
             var cl = lay.crossLinks[cli];
             var clActive = isWordActive(cl.srcWord) || isWordActive(cl.tgtWord);
             var cs = cl.srcNode, ct = cl.tgtNode;
-            var srcHsl = _hexToHsl(cl.srcColor);
-            var tgtHsl = _hexToHsl(cl.tgtColor);
+            var srcHsl = _hexToHsl(cl.srcColor), tgtHsl = _hexToHsl(cl.tgtColor);
             var cSrcOp = clActive ? cs.opacity : 0.06;
             var cTgtOp = clActive ? ct.opacity : 0.06;
             (function(cs, ct, srcHsl, tgtHsl, cSrcOp, cTgtOp) {
-              _drawRibbon(p,
-                cs.y, cs.y + cs.h, cs.x + cs.w,
-                ct.y, ct.y + ct.h, ct.x,
+              _drawRibbon(p, cs.y, cs.y + cs.h, cs.x + cs.w, ct.y, ct.y + ct.h, ct.x,
                 function(t) {
-                  var midHsl = _lerpHsl(srcHsl, tgtHsl, t);
-                  var midRgb = _hslToRgb(midHsl[0], midHsl[1], midHsl[2]);
-                  var op = cSrcOp + (cTgtOp - cSrcOp) * t;
-                  return p.color(midRgb[0], midRgb[1], midRgb[2], op);
-                },
-                16
-              );
+                  var mh = _lerpHsl(srcHsl, tgtHsl, t);
+                  var mr = _hslToRgb(mh[0], mh[1], mh[2]);
+                  return p.color(mr[0], mr[1], mr[2], cSrcOp + (cTgtOp - cSrcOp) * t);
+                }, 16);
             })(cs, ct, srcHsl, tgtHsl, cSrcOp, cTgtOp);
           }
         }
 
-        // ── Node circles (topmost layer) ──
+        // Node circles
         var accentRgb = _hexToRgb(T.accent);
         for (var wi2 = 0; wi2 < lay.wordSlots.length; wi2++) {
           var slot2 = lay.wordSlots[wi2];
           for (var ni2 = 0; ni2 < slot2.nodes.length; ni2++) {
             var nd2 = slot2.nodes[ni2];
             if (!nd2.isReal) continue;
-            var isThisNodeHovered = propsRef.current.hoveredNode &&
-              propsRef.current.hoveredNode.wi === wi2 &&
-              propsRef.current.hoveredNode.ni === ni2;
-            var isThisNodePinned = propsRef.current.pinnedTooltip &&
-              propsRef.current.pinnedTooltip.wi === wi2 &&
-              propsRef.current.pinnedTooltip.ni === ni2;
-            var isLocked = propsRef.current.lockedWords && propsRef.current.lockedWords.has(slot2.word);
+            var isNodeHov = hn && hn.wi === wi2 && hn.ni === ni2;
+            var isNodePin = pt && pt.wi === wi2 && pt.ni === ni2;
+            var isLocked  = locked && locked.has(slot2.word);
             p.noStroke();
-            p.fill(p.color(255, 255, 255, isThisNodeHovered || isThisNodePinned || isLocked ? 1.0 : 0.5));
-            p.ellipse(nd2.x + nd2.w / 2, nd2.y + nd2.h / 2, isThisNodeHovered || isThisNodePinned ? 10 : 5, isThisNodeHovered || isThisNodePinned ? 10 : 5);
-            if (isThisNodePinned) {
+            p.fill(p.color(255, 255, 255, isNodeHov || isNodePin || isLocked ? 1.0 : 0.5));
+            var r = isNodeHov || isNodePin ? 10 : 5;
+            p.ellipse(nd2.x + nd2.w / 2, nd2.y + nd2.h / 2, r, r);
+            if (isNodePin) {
               p.noFill();
               p.stroke(p.color(accentRgb[0], accentRgb[1], accentRgb[2], 1.0));
               p.strokeWeight(1);
@@ -342,19 +314,21 @@ function FibrasChart(props) {
         }
       };
 
-      // ── Mouse: hover — show transient tooltip ──
+      // ── Mouse: hover ──
       p.mouseMoved = function() {
         var lay = propsRef.current.layout;
         if (!lay) return;
         var mx = p.mouseX, my = p.mouseY;
         if (mx < 0 || mx > lay.canvasW || my < 0 || my > lay.canvasH) {
-          if (propsRef.current.hoveredWord) propsRef.current.setHoveredWord(null);
-          if (propsRef.current.setTooltipData) propsRef.current.setTooltipData(null);
-          return;
+          hoveredStreamRef.current = null; setHoveredStream(null);
+          hoveredNodeRef.current   = null; setHoveredNode(null);
+          setTooltipData(null);
+          p.redraw(); return;
         }
         var HIT = 7;
-        var found = null, foundData = null;
-        outer: for (var wi = 0; wi < lay.wordSlots.length; wi++) {
+
+        // Node circles
+        for (var wi = 0; wi < lay.wordSlots.length; wi++) {
           var slot = lay.wordSlots[wi];
           for (var ni = 0; ni < slot.nodes.length; ni++) {
             var nd = slot.nodes[ni];
@@ -362,21 +336,42 @@ function FibrasChart(props) {
             var cx = nd.x + nd.w / 2, cy = nd.y + nd.h / 2;
             var dx = mx - cx, dy = my - cy;
             if (dx * dx + dy * dy < HIT * HIT) {
-              found = slot.word;
               var rect = containerRef.current.getBoundingClientRect();
-              foundData = { word: slot.word, nd: nd, mx: p.mouseX + rect.left, my: p.mouseY + rect.top };
-              break outer;
+              var newHn = { wi: wi, ni: ni };
+              hoveredNodeRef.current   = newHn;   setHoveredNode(newHn);
+              hoveredStreamRef.current = null;     setHoveredStream(null);
+              setTooltipData({ word: slot.word, nd: nd, wi: wi, ni: ni,
+                mx: p.mouseX + rect.left, my: p.mouseY + rect.top });
+              p.redraw(); return;
             }
           }
         }
-        if (found !== propsRef.current.hoveredWord) propsRef.current.setHoveredWord(found);
-        if (propsRef.current.setTooltipData) propsRef.current.setTooltipData(foundData);
+
+        // Ribbons
+        for (var wi2 = 0; wi2 < lay.wordSlots.length; wi2++) {
+          var slot2 = lay.wordSlots[wi2];
+          for (var li = 0; li < slot2.links.length; li++) {
+            var lk = slot2.links[li];
+            var lxMin = lk.srcNode.x + lk.srcNode.w, lxMax = lk.tgtNode.x;
+            var lyMin = Math.min(lk.srcNode.y, lk.tgtNode.y);
+            var lyMax = Math.max(lk.srcNode.y + lk.srcNode.h, lk.tgtNode.y + lk.tgtNode.h);
+            if (mx >= lxMin && mx <= lxMax && my >= lyMin && my <= lyMax) {
+              hoveredStreamRef.current = slot2.word; setHoveredStream(slot2.word);
+              hoveredNodeRef.current   = null;       setHoveredNode(null);
+              setTooltipData(null);
+              p.redraw(); return;
+            }
+          }
+        }
+
+        // Nothing hit
+        hoveredStreamRef.current = null; setHoveredStream(null);
+        hoveredNodeRef.current   = null; setHoveredNode(null);
+        setTooltipData(null);
+        p.redraw();
       };
 
       // ── Mouse: click ──
-      // Node circle → pin/unpin tooltip
-      // Ribbon edge → lock/unlock stream
-      // Elsewhere → clear all
       p.mousePressed = function() {
         var lay = propsRef.current.layout;
         if (!lay) return;
@@ -384,8 +379,8 @@ function FibrasChart(props) {
         if (mx < 0 || mx > lay.canvasW || my < 0 || my > lay.canvasH) return;
         var HIT = 7;
 
-        // Check node circles first
-        outer: for (var wi = 0; wi < lay.wordSlots.length; wi++) {
+        // Node circles → pin/unpin tooltip
+        for (var wi = 0; wi < lay.wordSlots.length; wi++) {
           var slot = lay.wordSlots[wi];
           for (var ni = 0; ni < slot.nodes.length; ni++) {
             var nd = slot.nodes[ni];
@@ -393,39 +388,39 @@ function FibrasChart(props) {
             var cx = nd.x + nd.w / 2, cy = nd.y + nd.h / 2;
             var dx = mx - cx, dy = my - cy;
             if (dx * dx + dy * dy < HIT * HIT) {
-              // Toggle pinned tooltip for this node
-              var cur = propsRef.current.pinnedTooltip;
-              if (cur && cur.word === slot.word && cur.nd === nd) {
-                if (propsRef.current.setPinnedTooltip) propsRef.current.setPinnedTooltip(null);
+              var cur = pinnedTooltipRef.current;
+              if (cur && cur.wi === wi && cur.ni === ni) {
+                pinnedTooltipRef.current = null; setPinnedTooltip(null);
               } else {
                 var rect = containerRef.current.getBoundingClientRect();
-                var pinData = { word: slot.word, nd: nd, mx: p.mouseX + rect.left, my: p.mouseY + rect.top };
-                if (propsRef.current.setPinnedTooltip) propsRef.current.setPinnedTooltip(pinData);
+                var pin = { word: slot.word, nd: nd, wi: wi, ni: ni,
+                  mx: p.mouseX + rect.left, my: p.mouseY + rect.top };
+                pinnedTooltipRef.current = pin; setPinnedTooltip(pin);
               }
-              return;
+              p.redraw(); return;
             }
           }
         }
 
-        // Check ribbon edges
+        // Ribbons → lock/unlock stream
         for (var wi2 = 0; wi2 < lay.wordSlots.length; wi2++) {
           var slot2 = lay.wordSlots[wi2];
           for (var li = 0; li < slot2.links.length; li++) {
             var lk = slot2.links[li];
-            var lxMin = lk.srcNode.x + lk.srcNode.w;
-            var lxMax = lk.tgtNode.x;
+            var lxMin = lk.srcNode.x + lk.srcNode.w, lxMax = lk.tgtNode.x;
             var lyMin = Math.min(lk.srcNode.y, lk.tgtNode.y);
             var lyMax = Math.max(lk.srcNode.y + lk.srcNode.h, lk.tgtNode.y + lk.tgtNode.h);
             if (mx >= lxMin && mx <= lxMax && my >= lyMin && my <= lyMax) {
               if (propsRef.current.toggleLocked) propsRef.current.toggleLocked(slot2.word);
-              return;
+              p.redraw(); return;
             }
           }
         }
 
-        // Click elsewhere — clear all
+        // Elsewhere → clear Sankey state only
         if (propsRef.current.clearLocked) propsRef.current.clearLocked();
-        if (propsRef.current.setPinnedTooltip) propsRef.current.setPinnedTooltip(null);
+        pinnedTooltipRef.current = null; setPinnedTooltip(null);
+        p.redraw();
       };
     };
 
@@ -435,10 +430,12 @@ function FibrasChart(props) {
     };
   }, [props.layout]);
 
+  // Only redraw on external state changes (locks, seeds, emos)
   useEffect(function() {
     if (p5Ref.current) p5Ref.current.redraw();
-  }, [props.hoveredNode, props.hoveredStream, props.lockedWords, props.seeds, props.enabledEmos, props.pinnedTooltip]);
+  }, [props.lockedWords, props.seeds, props.enabledEmos]);
 
+  // Build tooltip element
   function buildTipEl(data, pinned) {
     if (!data) return null;
     var nd = data.nd;
@@ -448,15 +445,11 @@ function FibrasChart(props) {
     if (nd.provenanceSource) {
       if (prov === "vectorial") {
         srcLine = React.createElement("div", { style: { fontSize: 9, color: T.textMid, marginTop: 2 } },
-          "desde ",
-          React.createElement("span", { style: { color: T.arousal } }, nd.provenanceSource),
-          " \u00B7 sim: " + nd.provenanceSim.toFixed(2)
-        );
+          "desde ", React.createElement("span", { style: { color: T.arousal } }, nd.provenanceSource),
+          " \u00B7 sim: " + nd.provenanceSim.toFixed(2));
       } else if (prov === "semantico") {
         srcLine = React.createElement("div", { style: { fontSize: 9, color: T.textMid, marginTop: 2 } },
-          "desde ",
-          React.createElement("span", { style: { color: T.flow } }, nd.provenanceSource)
-        );
+          "desde ", React.createElement("span", { style: { color: T.flow } }, nd.provenanceSource));
       }
     }
     return React.createElement("div", {
@@ -471,17 +464,15 @@ function FibrasChart(props) {
       }
     },
       React.createElement("div", { style: { color: T.accent, fontSize: 9, marginBottom: 2 } },
-        data.word + " \u00B7 S" + (nd.segIdx + 1)
-      ),
+        data.word + " \u00B7 S" + (nd.segIdx + 1)),
       React.createElement("div", { style: { color: T.textMid } },
-        "Frecuencia ", React.createElement("span", { style: { color: T.text } }, nd.primary !== undefined ? String(Math.round(nd.primary)) : "\u2014")
-      ),
+        "Frecuencia ", React.createElement("span", { style: { color: T.text } },
+          nd.primary !== undefined ? String(Math.round(nd.primary)) : "\u2014")),
       React.createElement("div", { style: { color: T.textMid } },
-        "Relevancia ", React.createElement("span", { style: { color: T.text } }, nd.secondary !== undefined ? nd.secondary.toFixed(3) : "\u2014")
-      ),
+        "Relevancia ", React.createElement("span", { style: { color: T.text } },
+          nd.secondary !== undefined ? nd.secondary.toFixed(3) : "\u2014")),
       React.createElement("div", { style: { color: provColor, fontSize: 9, marginTop: 3 } },
-        "\u2B21 " + (_PROV_LABELS[prov] || prov)
-      ),
+        "\u2B21 " + (_PROV_LABELS[prov] || prov)),
       srcLine
     );
   }
@@ -492,7 +483,7 @@ function FibrasChart(props) {
       style: { background: T.bg, borderRadius: T.radius6, border: "1px solid " + T.border, overflow: "hidden" }
     }),
     buildTipEl(tooltipData, false),
-    buildTipEl(props.pinnedTooltip, true)
+    buildTipEl(pinnedTooltip, true)
   );
 }
 
@@ -572,11 +563,9 @@ function FibrasMinimap(props) {
     },
       React.createElement("div", { style: { color: T.accent, fontSize: 9, marginBottom: 2 } }, "Segmento " + (tipData.seg + 1)),
       React.createElement("div", { style: { color: T.textMid } },
-        "Polaridad ", React.createElement("span", { style: { color: polColor } }, (pol > 0 ? "+" : "") + pol.toFixed(3))
-      ),
+        "Polaridad ", React.createElement("span", { style: { color: polColor } }, (pol > 0 ? "+" : "") + pol.toFixed(3))),
       React.createElement("div", { style: { color: T.textMid } },
-        "Activaci\u00F3n ", React.createElement("span", { style: { color: T.arousal } }, (aro > 0 ? "+" : "") + aro.toFixed(3))
-      )
+        "Activaci\u00F3n ", React.createElement("span", { style: { color: T.arousal } }, (aro > 0 ? "+" : "") + aro.toFixed(3)))
     );
   }
 
@@ -594,9 +583,7 @@ function FibrasMinimap(props) {
     }, "\u25C0"),
 
     React.createElement("div", {
-      onClick: handleClick,
-      onMouseMove: handleMouseMove,
-      onMouseLeave: handleMouseLeave,
+      onClick: handleClick, onMouseMove: handleMouseMove, onMouseLeave: handleMouseLeave,
       style: {
         position: "relative", width: chartWidth, height: barH,
         border: "1px solid " + T.border, borderRadius: T.radius3,
@@ -605,14 +592,11 @@ function FibrasMinimap(props) {
     },
       segPolarity.map(function(pol, i) {
         var rgb = _polarityToRgb(pol);
-        return React.createElement("div", {
-          key: i,
-          style: {
-            position: "absolute", left: i * segW, top: 0,
-            width: Math.ceil(segW) + 1, height: barH,
-            background: "rgb(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + ")", opacity: 0.35
-          }
-        });
+        return React.createElement("div", { key: i, style: {
+          position: "absolute", left: i * segW, top: 0,
+          width: Math.ceil(segW) + 1, height: barH,
+          background: "rgb(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + ")", opacity: 0.35
+        }});
       }),
       React.createElement("svg", {
         style: { position: "absolute", top: 0, left: 0, width: chartWidth, height: barH, pointerEvents: "none" }
@@ -622,30 +606,22 @@ function FibrasMinimap(props) {
           stroke: "rgba(255,255,255,0.25)", strokeWidth: 1, strokeDasharray: "3,3"
         }),
         arousalDashes.map(function(d, i) {
-          return React.createElement("line", {
-            key: i, x1: d.x1, x2: d.x2, y1: d.y, y2: d.y,
-            stroke: "white", strokeWidth: 1.5, opacity: 0.8
-          });
+          return React.createElement("line", { key: i, x1: d.x1, x2: d.x2, y1: d.y, y2: d.y,
+            stroke: "white", strokeWidth: 1.5, opacity: 0.8 });
         }),
         segW > 14 && segArousal.map(function(val, i) {
-          return React.createElement("text", {
-            key: "l" + i,
-            x: i * segW + segW / 2, y: barH - 3,
-            textAnchor: "middle",
-            fontSize: Math.min(9, segW * 0.5),
-            fontFamily: T.fontMono,
+          return React.createElement("text", { key: "l" + i,
+            x: i * segW + segW / 2, y: barH - 3, textAnchor: "middle",
+            fontSize: Math.min(9, segW * 0.5), fontFamily: T.fontMono,
             fill: "rgba(255,255,255,0.35)"
           }, String(i + 1));
         })
       ),
-      showNav && React.createElement("div", {
-        style: {
-          position: "absolute", left: navX, top: 0,
-          width: navW, height: barH - 2,
-          border: "2px solid " + T.accent, borderRadius: T.radius3,
-          background: T.accent + "15", pointerEvents: "none", boxSizing: "border-box"
-        }
-      })
+      showNav && React.createElement("div", { style: {
+        position: "absolute", left: navX, top: 0, width: navW, height: barH - 2,
+        border: "2px solid " + T.accent, borderRadius: T.radius3,
+        background: T.accent + "15", pointerEvents: "none", boxSizing: "border-box"
+      }})
     ),
 
     React.createElement("button", {
@@ -706,10 +682,8 @@ function FibrasEmoBars(props) {
         React.createElement("div", { style: { color: T.accent, fontSize: 9, marginBottom: 2 } }, "Segmento " + (tipData.seg + 1)),
         emoKeys.map(function(ek) {
           return React.createElement("div", { key: ek, style: { color: T.textMid } },
-            React.createElement("span", { style: { color: EC[ek] } }, _EMO_ES[ek] || ek),
-            " ",
-            React.createElement("span", { style: { color: T.text } }, ((ebar[ek] || 0) * 100).toFixed(1) + "%")
-          );
+            React.createElement("span", { style: { color: EC[ek] } }, _EMO_ES[ek] || ek), " ",
+            React.createElement("span", { style: { color: T.text } }, ((ebar[ek] || 0) * 100).toFixed(1) + "%"));
         })
       );
     }
@@ -735,14 +709,11 @@ function FibrasEmoBars(props) {
       },
         active.map(function(ek, eki) {
           var eH = ((ebar[ek] || 0) / maxEmo) * barH;
-          return React.createElement("div", {
-            key: ek,
-            style: {
-              position: "absolute", left: 4 + eki * (barW + 1), bottom: 2,
-              width: barW, height: eH, background: EC[ek], opacity: 0.7, borderRadius: 1,
-              pointerEvents: "none"
-            }
-          });
+          return React.createElement("div", { key: ek, style: {
+            position: "absolute", left: 4 + eki * (barW + 1), bottom: 2,
+            width: barW, height: eH, background: EC[ek], opacity: 0.7, borderRadius: 1,
+            pointerEvents: "none"
+          }});
         })
       );
     }),
@@ -769,13 +740,8 @@ function FibrasDocStack(props) {
   var winSize      = 10;
 
   var _ws = useState(0); var winStart = _ws[0], setWinStart = _ws[1];
-  var _hw = useState(null); var hoveredWord = _hw[0], setHoveredWord = _hw[1];
-  var _hn = useState(null); var hoveredNode = _hn[0], setHoveredNode = _hn[1];
-  var _hs = useState(null); var hoveredStream = _hs[0], setHoveredStream = _hs[1];
-  var _td = useState(null); var tooltipData = _td[0], setTooltipData = _td[1];
-  var _pt = useState(null); var pinnedTooltip = _pt[0], setPinnedTooltip = _pt[1];
   var _segTip = useState(null); var segTooltip = _segTip[0], setSegTooltip = _segTip[1];
-  var _segPin = useState(null); var segPinned = _segPin[0], setSegPinned = _segPin[1];
+  var _segPin = useState(null); var segPinned  = _segPin[0], setSegPinned  = _segPin[1];
 
   useEffect(function() {
     if (!fibras) return;
@@ -794,7 +760,7 @@ function FibrasDocStack(props) {
   if (!fibras) return null;
 
   var chartAreaW = canvasW - (layout ? layout.padLeft : 80) - 20;
-  var segLabels = layout ? layout.columns.map(function(col) {
+  var segLabels  = layout ? layout.columns.map(function(col) {
     return { segIdx: col.segIdx, x: col.x, label: col.label };
   }) : [];
   var activeTip = segPinned || segTooltip;
@@ -806,9 +772,7 @@ function FibrasDocStack(props) {
       style: { fontSize: T.fs10, color: T.textMid, fontFamily: T.fontMono }
     }, props.docLabel),
 
-    React.createElement("div", {
-      style: { marginLeft: (layout ? layout.padLeft : 80) - 66, marginRight: -14 }
-    },
+    React.createElement("div", { style: { marginLeft: (layout ? layout.padLeft : 80) - 66, marginRight: -14 } },
       React.createElement(FibrasMinimap, {
         numSegs: fibras.numSegs, winStart: winStart, winSize: winSize,
         setWinStart: setWinStart, chartWidth: chartAreaW + 66 + 14,
@@ -835,8 +799,7 @@ function FibrasDocStack(props) {
           },
           style: {
             position: "absolute", left: sl.x, top: 0, transform: "translateX(-50%)",
-            fontSize: 9, fontFamily: T.fontMono,
-            color: "#ffffff", fontWeight: "bold",
+            fontSize: 9, fontFamily: T.fontMono, color: "#ffffff", fontWeight: "bold",
             cursor: sl.label ? "pointer" : "default"
           }
         }, txt);
@@ -844,8 +807,8 @@ function FibrasDocStack(props) {
       activeTip && React.createElement("div", {
         style: {
           position: "absolute", left: Math.min(activeTip.x, canvasW - 220), top: 18,
-          maxWidth: 200, padding: T.pad8,
-          background: T.bg + "ee", border: "1px solid " + (segPinned ? T.accent : T.borderLight),
+          maxWidth: 200, padding: T.pad8, background: T.bg + "ee",
+          border: "1px solid " + (segPinned ? T.accent : T.borderLight),
           borderRadius: T.radius4, fontFamily: T.fontMono, fontSize: T.fs10,
           color: T.text, zIndex: 50, lineHeight: 1.5,
           backdropFilter: "blur(2px)", wordWrap: "break-word"
@@ -858,14 +821,8 @@ function FibrasDocStack(props) {
 
     React.createElement(FibrasChart, {
       layout: layout, seeds: seeds,
-      hoveredWord: hoveredWord, setHoveredWord: setHoveredWord,
-      hoveredNode: hoveredNode, setHoveredNode: setHoveredNode,
-      hoveredStream: hoveredStream, setHoveredStream: setHoveredStream,
-      lockedWords: lockedWords, toggleLocked: toggleLocked,
-      clearLocked: clearLocked,
-      enabledEmos: enabledEmos,
-      tooltipData: tooltipData, setTooltipData: setTooltipData,
-      pinnedTooltip: pinnedTooltip, setPinnedTooltip: setPinnedTooltip
+      lockedWords: lockedWords, toggleLocked: toggleLocked, clearLocked: clearLocked,
+      enabledEmos: enabledEmos
     })
   );
 }
