@@ -130,8 +130,8 @@ function WordPanel(props) {
       }
     }, "Limpiar (" + seedCount + ")"),
 
-    // ── Word list — rows aligned to Sankey ──
-    React.createElement("div", { style: { flex: 1 } },
+    // ── Word list — rows aligned to Sankey, natural height ──
+    React.createElement("div", { style: {} },
       words.map(function(item) {
         var w = item.word;
         var isSeed = seeds.has(w);
