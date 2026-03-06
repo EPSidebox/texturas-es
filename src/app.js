@@ -332,7 +332,7 @@ function Texturas() {
       var res = perDocResults[id];
       if (!res) continue;
       var csb = customSegsByDoc[id] || null;
-      map[id] = computeFibras(enriched, freqMap, relevanceMap, eng,
+      map[id] = computeFibras(res.enriched, res.freqMap, res.relevanceMap, eng,
   seeds, fibrasSegs, topN, decay,
   sortBy === "relevance" ? "relevance" : "freq",
   csb, ngMode, false);
