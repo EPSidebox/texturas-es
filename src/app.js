@@ -161,6 +161,41 @@ function TejidoDrawer(props) {
   );
 }
 
+// ── Tejido drawer toggle button (right edge, always visible) ──
+function TejidoToggle(props) {
+  var open = props.open, onClick = props.onClick;
+  return React.createElement("div", {
+    onClick: onClick,
+    style: {
+      position: "fixed",
+      top: "50%",
+      right: open ? 540 : 0,
+      transform: "translateY(-50%)",
+      zIndex: 201,
+      background: open ? T.flow + "33" : T.bgCard,
+      border: "1px solid " + (open ? T.flow : T.borderLight),
+      borderRight: "none",
+      borderRadius: "4px 0 0 4px",
+      padding: "10px 4px",
+      cursor: "pointer",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      transition: "right 0.25s ease"
+    }
+  },
+    React.createElement("span", {
+      style: {
+        fontSize: 9, color: open ? T.flow : T.textDim,
+        fontFamily: T.fontMono,
+        writingMode: "vertical-rl",
+        textOrientation: "mixed",
+        letterSpacing: 1
+      }
+    }, "Tejido")
+  );
+}
+
 // ── Aligned Word Panel ──
 function AlignedWordPanel(props) {
   var words = props.words || [];
@@ -236,12 +271,9 @@ function AlignedWordPanel(props) {
           background: T.bgCard,
           border: "1px solid " + (notFound ? T.negative : T.border),
           borderRadius: T.radius3,
-          color: T.text,
-          padding: T.pad4,
-          fontSize: T.fs10,
-          fontFamily: T.fontMono,
-          outline: "none",
-          boxSizing: "border-box"
+          color: T.text, padding: T.pad4,
+          fontSize: T.fs10, fontFamily: T.fontMono,
+          outline: "none", boxSizing: "border-box"
         }
       }),
       notFound && React.createElement("div", {
@@ -262,7 +294,7 @@ function AlignedWordPanel(props) {
       }
     }, "Limpiar (" + seedCount + ")"),
 
-    // Word list — rows aligned to Sankey
+    // Word list
     React.createElement("div", { style: { flex: 1 } },
       words.map(function(item) {
         var w = item.word;
@@ -274,10 +306,8 @@ function AlignedWordPanel(props) {
           onClick: function() { toggleSeed(w); },
           style: {
             height: rowH,
-            display: "flex",
-            alignItems: "center",
-            gap: 3,
-            padding: "0 4px",
+            display: "flex", alignItems: "center",
+            gap: 3, padding: "0 4px",
             cursor: "pointer",
             background: isSeed ? T.accent + "18" : "transparent",
             borderLeft: "2px solid " + (isSeed ? T.accent : "transparent"),
@@ -328,7 +358,7 @@ function AlignedWordPanel(props) {
       })
     ),
 
-    // N-gram toggle
+    // N-gram
     React.createElement("div", { style: { display: "flex", gap: 2, marginTop: T.gap4 } },
       [1, 2, 3].map(function(n) {
         var active = ngMode === n;
@@ -360,8 +390,8 @@ function Texturas() {
   var _sv = useState(["doc1"]);
   var selectedViewDocs = _sv[0], setSelectedViewDocs = _sv[1];
 
-  // ── Tab ──
-  var _tab = useState("input");
+  // ── Tab: "input" | "output" | "about" | null (Fibras only) ──
+  var _tab = useState(null);
   var tab = _tab[0], setTab = _tab[1];
 
   // ── Tejido drawer ──
@@ -498,7 +528,7 @@ function Texturas() {
       setCustomSegsByDoc(newCsb);
       setLoading(false);
       setMsg("An\u00E1lisis completo.");
-      setTab("fibras");
+      setTab(null); // return to Fibras view
     }, 50);
   }
 
@@ -592,7 +622,7 @@ function Texturas() {
 
   function clearLocked() { setLockedWords(new Set()); }
 
-  // ── Fibras mode derived from state ──
+  // ── Fibras mode ──
   var fibrasMode = persistentes ? "persistentes" : (seeds.size > 0 ? "semillas" : "recurrentes");
 
   // ── Fibras data (memoized) ──
@@ -613,7 +643,7 @@ function Texturas() {
     return map;
   }, [selectedViewDocs, perDocResults, seeds, fibrasSegs, fibrasMode, topN, decay, sortBy, customSegsByDoc, ngMode]);
 
-  // ── Word list for aligned panel ──
+  // ── Word list ──
   var fibrasWords = useMemo(function() {
     var id = selectedViewDocs[0];
     var fd = fibrasDataMap[id];
@@ -623,7 +653,7 @@ function Texturas() {
     });
   }, [fibrasDataMap, selectedViewDocs]);
 
-  // ── CommMap by doc ──
+  // ── CommMap ──
   var commMapByDoc = useMemo(function() {
     var map = {};
     for (var i = 0; i < selectedViewDocs.length; i++) {
@@ -661,7 +691,7 @@ function Texturas() {
     if (docs[adi].id === activeInputDoc) { activeDoc = docs[adi]; break; }
   }
 
-  // ── View result (for Tejido drawer) ──
+  // ── View result (Tejido drawer) ──
   var viewRes = perDocResults[selectedViewDocs[0]] || null;
 
   // ── Custom seg info ──
@@ -684,18 +714,8 @@ function Texturas() {
     };
   }
 
-  function tejidoTabStyle() {
-    return {
-      background: tejidoOpen ? T.flow + "22" : "transparent",
-      border: "1px solid " + (tejidoOpen ? T.flow : T.border),
-      color: tejidoOpen ? T.flow : T.textMid,
-      borderRadius: T.radius4,
-      padding: "6px 16px",
-      fontSize: T.fs12,
-      fontFamily: T.fontMono,
-      cursor: "pointer"
-    };
-  }
+  // ── Fibras view — always rendered unless a tab is open ──
+  var showFibras = tab === null;
 
   // ════════════════════════════════════════════
   // RENDER
@@ -710,7 +730,7 @@ function Texturas() {
     }
   },
 
-    // ── Tejido Drawer (fixed overlay) ──
+    // ── Tejido drawer (fixed overlay) ──
     React.createElement(TejidoDrawer, {
       open: tejidoOpen,
       onClose: function() { setTejidoOpen(false); },
@@ -725,13 +745,17 @@ function Texturas() {
       onWordClick: toggleSeed
     }),
 
+    // ── Tejido toggle button (right edge, always visible) ──
+    React.createElement(TejidoToggle, {
+      open: tejidoOpen,
+      onClick: function() { setTejidoOpen(!tejidoOpen); }
+    }),
+
     // ── Header ──
     React.createElement("div", {
       style: {
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        marginBottom: T.gap16
+        display: "flex", justifyContent: "space-between",
+        alignItems: "center", marginBottom: T.gap16
       }
     },
       React.createElement("h1", {
@@ -742,152 +766,35 @@ function Texturas() {
       }, msg)
     ),
 
-    // ── Tab bar ──
+    // ── Tab bar: Importar | Exportar (left), Acerca (right) ──
     React.createElement("div", {
       style: {
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        marginBottom: T.gap16
+        display: "flex", justifyContent: "space-between",
+        alignItems: "center", marginBottom: T.gap16
       }
     },
       React.createElement("div", { style: { display: "flex", gap: T.gap6 } },
         React.createElement("button", {
-          onClick: function() { setTab("input"); },
+          onClick: function() { setTab(tab === "input" ? null : "input"); },
           style: tabStyle("input")
         }, "Importar"),
         React.createElement("button", {
-          onClick: function() { setTab("fibras"); },
-          style: tabStyle("fibras")
-        }, "Fibras"),
-        React.createElement("button", {
-          onClick: function() { setTejidoOpen(!tejidoOpen); },
-          style: tejidoTabStyle()
-        }, "Tejido"),
-        React.createElement("button", {
-          onClick: function() { setTab("output"); },
+          onClick: function() { setTab(tab === "output" ? null : "output"); },
           style: tabStyle("output")
         }, "Exportar")
       ),
       React.createElement("button", {
-        onClick: function() { setTab("about"); },
+        onClick: function() { setTab(tab === "about" ? null : "about"); },
         style: tabStyle("about")
       }, "Acerca")
     ),
 
     // ════════════════════════════════════════
-    // TAB: IMPORTAR
+    // FIBRAS — always visible when no tab is open
     // ════════════════════════════════════════
-    tab === "input" && React.createElement("div", null,
-      // Doc tabs
-      React.createElement("div", {
-        style: { display: "flex", gap: T.gap4, marginBottom: T.gap8, flexWrap: "wrap", alignItems: "center" }
-      },
-        docs.map(function(d) {
-          var active = d.id === activeInputDoc;
-          return React.createElement("div", {
-            key: d.id,
-            style: { display: "flex", alignItems: "center", gap: 2 }
-          },
-            React.createElement("button", {
-              onClick: function() { setActiveInputDoc(d.id); },
-              style: {
-                background: active ? T.accent + "22" : T.bgCard,
-                border: "1px solid " + (active ? T.accent : T.border),
-                color: active ? T.accent : T.textMid,
-                borderRadius: T.radius3, padding: "3px 8px",
-                fontSize: T.fs10, fontFamily: T.fontMono, cursor: "pointer"
-              }
-            }, d.label),
-            docs.length > 1 && React.createElement("button", {
-              onClick: function() { removeDoc(d.id); },
-              style: {
-                background: "transparent", border: "none",
-                color: T.textFaint, cursor: "pointer",
-                fontSize: T.fs10, padding: "0 2px"
-              }
-            }, "\u00D7")
-          );
-        }),
-        React.createElement("button", {
-          onClick: addDoc,
-          style: {
-            background: "transparent",
-            border: "1px dashed " + T.borderLight,
-            color: T.textDim, borderRadius: T.radius3,
-            padding: "3px 8px", fontSize: T.fs10,
-            fontFamily: T.fontMono, cursor: "pointer"
-          }
-        }, "+ Doc")
-      ),
+    showFibras && React.createElement("div", null,
 
-      // Label editor
-      activeDoc && React.createElement("div", { style: { marginBottom: T.gap8 } },
-        React.createElement("input", {
-          type: "text",
-          value: activeDoc.label,
-          onChange: function(ev) { updateDocLabel(activeDoc.id, ev.target.value); },
-          style: {
-            background: T.bgCard, border: "1px solid " + T.border,
-            borderRadius: T.radius3, color: T.text, padding: T.pad4,
-            fontSize: T.fs12, fontFamily: T.fontMono, width: 300
-          }
-        })
-      ),
-
-      // Textarea
-      activeDoc && React.createElement("textarea", {
-        value: activeDoc.text,
-        onChange: function(ev) { updateDocText(activeDoc.id, ev.target.value); },
-        placeholder: "Pega o escribe tu texto en espa\u00F1ol aqu\u00ED...",
-        style: {
-          width: "100%", height: 300,
-          background: T.bgDeep, border: "1px solid " + T.border,
-          borderRadius: T.radius4, color: T.text, padding: T.pad12,
-          fontSize: T.fs13, fontFamily: T.fontMono,
-          resize: "vertical", lineHeight: 1.6
-        }
-      }),
-
-      // Split + params + analyze
-      React.createElement("div", {
-        style: { marginTop: T.gap8, display: "flex", gap: T.gap8, alignItems: "center" }
-      },
-        React.createElement("button", {
-          onClick: doSplit,
-          style: {
-            background: "transparent", border: "1px solid " + T.borderLight,
-            color: T.textMid, borderRadius: T.radius3,
-            padding: "4px 10px", fontSize: T.fs10,
-            fontFamily: T.fontMono, cursor: "pointer"
-          }
-        }, "Separar (---DOC:---)"),
-        React.createElement("span", { style: { fontSize: 9, color: T.textFaint } },
-          "Usa ---DOC:Nombre--- para separar m\u00FAltiples documentos"
-        )
-      ),
-
-      React.createElement("div", { style: { marginTop: T.gap16 } },
-        React.createElement("button", {
-          onClick: runAnalysis,
-          disabled: loading || engSt !== "ready",
-          style: {
-            background: T.accent, border: "none", color: T.bg,
-            borderRadius: T.radius4, padding: "8px 24px",
-            fontSize: T.fs13, fontFamily: T.fontMono, fontWeight: 500,
-            cursor: loading ? "wait" : "pointer",
-            opacity: loading || engSt !== "ready" ? 0.5 : 1
-          }
-        }, loading ? "Analizando..." : "Analizar")
-      )
-    ),
-
-    // ════════════════════════════════════════
-    // TAB: FIBRAS
-    // ════════════════════════════════════════
-    tab === "fibras" && React.createElement("div", null,
-
-      // ── Document selector ──
+      // Document selector
       docs.length > 1 && React.createElement("div", {
         style: { display: "flex", gap: T.gap4, marginBottom: T.gap8 }
       },
@@ -907,7 +814,7 @@ function Texturas() {
         })
       ),
 
-      // ── Controls row ──
+      // Controls row
       React.createElement("div", {
         style: {
           display: "flex", gap: T.gap8, alignItems: "center",
@@ -918,43 +825,25 @@ function Texturas() {
           borderRadius: T.radius4
         }
       },
-        // Palabras
         React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 4 } },
           React.createElement("span", { style: { fontSize: 9, color: T.textDim } }, "Palabras:"),
           React.createElement(NumInput, { value: topN, onChange: rerunTopN, min: 5, max: 100, width: 40 })
         ),
-
         React.createElement("span", { style: { color: T.border } }, "|"),
-
-        // Segmentos
         React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 4 } },
           React.createElement("span", { style: { fontSize: 9, color: T.textDim } }, "Seg:"),
           hasCustom
             ? React.createElement("span", {
-                style: { fontSize: 9, color: T.accent, fontFamily: T.fontMono }
+                style: { fontSize: 9, color: T.accent }
               }, customCount + " (custom)")
             : React.createElement(NumInput, { value: fibrasSegs, onChange: setFibrasSegs, min: 3, max: 50, width: 40 })
         ),
-
         React.createElement("span", { style: { color: T.border } }, "|"),
-
-        // Sort
         React.createElement("div", { style: { display: "flex", gap: 2 } },
-          React.createElement(TBtn, {
-            active: sortBy === "freq",
-            onClick: function() { setSortBy("freq"); },
-            label: "Frecuencia"
-          }),
-          React.createElement(TBtn, {
-            active: sortBy === "relevance",
-            onClick: function() { setSortBy("relevance"); },
-            label: "Relevancia"
-          })
+          React.createElement(TBtn, { active: sortBy === "freq",      onClick: function() { setSortBy("freq"); },      label: "Frecuencia" }),
+          React.createElement(TBtn, { active: sortBy === "relevance", onClick: function() { setSortBy("relevance"); }, label: "Relevancia" })
         ),
-
         React.createElement("span", { style: { color: T.border } }, "|"),
-
-        // Decaimiento
         React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 4 } },
           React.createElement("span", { style: { fontSize: 9, color: T.textDim } }, "Decaimiento:"),
           React.createElement("input", {
@@ -964,69 +853,28 @@ function Texturas() {
           }),
           React.createElement("span", { style: { fontSize: 9, color: T.textMid } }, decay.toFixed(1))
         ),
-
         React.createElement("span", { style: { color: T.border } }, "|"),
-
-        // Mode
         React.createElement("div", { style: { display: "flex", gap: 2 } },
-          React.createElement(TBtn, {
-            active: !persistentes,
-            onClick: function() { setPersistentes(false); },
-            label: "Recurrentes"
-          }),
-          React.createElement(TBtn, {
-            active: persistentes,
-            onClick: function() { setPersistentes(true); },
-            label: "Persistentes"
-          })
+          React.createElement(TBtn, { active: !persistentes, onClick: function() { setPersistentes(false); }, label: "Recurrentes" }),
+          React.createElement(TBtn, { active: persistentes,  onClick: function() { setPersistentes(true); },  label: "Persistentes" })
         ),
-
         React.createElement("span", { style: { color: T.border } }, "|"),
-
-        // Flujo
         React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 2 } },
           React.createElement("span", { style: { fontSize: 9, color: T.textDim } }, "Flujo:"),
-          React.createElement(TBtn, {
-            active: flow === "bi",
-            onClick: function() { rerunStage2(undefined, "bi"); },
-            label: "Ambivalente"
-          }),
-          React.createElement(TBtn, {
-            active: flow === "up",
-            onClick: function() { rerunStage2(undefined, "up"); },
-            label: "Ascendente"
-          }),
-          React.createElement(TBtn, {
-            active: flow === "down",
-            onClick: function() { rerunStage2(undefined, "down"); },
-            label: "Descendente"
-          })
+          React.createElement(TBtn, { active: flow === "bi",   onClick: function() { rerunStage2(undefined, "bi");   }, label: "Ambivalente" }),
+          React.createElement(TBtn, { active: flow === "up",   onClick: function() { rerunStage2(undefined, "up");   }, label: "Ascendente" }),
+          React.createElement(TBtn, { active: flow === "down", onClick: function() { rerunStage2(undefined, "down"); }, label: "Descendente" })
         ),
-
         React.createElement("span", { style: { color: T.border } }, "|"),
-
-        // Color
         React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 2 } },
           React.createElement("span", { style: { fontSize: 9, color: T.textDim } }, "Color:"),
-          React.createElement(TBtn, {
-            active: colorMode === "rango",
-            onClick: function() { setColorMode("rango"); },
-            label: "Rango"
-          }),
-          React.createElement(TBtn, {
-            active: colorMode === "valencia",
-            onClick: function() { setColorMode("valencia"); },
-            label: "Polaridad"
-          }),
-          React.createElement(TBtn, {
-            active: colorMode === "comunidad",
-            onClick: function() { setColorMode("comunidad"); },
-            label: "Comunidad"
-          })
+          React.createElement(TBtn, { active: colorMode === "rango",     onClick: function() { setColorMode("rango"); },     label: "Rango" }),
+          React.createElement(TBtn, { active: colorMode === "valencia",  onClick: function() { setColorMode("valencia"); },  label: "Polaridad" }),
+          React.createElement(TBtn, { active: colorMode === "comunidad", onClick: function() { setColorMode("comunidad"); }, label: "Comunidad" })
         )
       ),
 
-      // ── Scrollable area: word panel + Sankey ──
+      // Scrollable word panel + Sankey
       React.createElement("div", {
         style: {
           height: scrollH,
@@ -1034,9 +882,7 @@ function Texturas() {
           overflowX: "hidden"
         }
       },
-        React.createElement("div", {
-          style: { display: "flex", gap: T.gap12 }
-        },
+        React.createElement("div", { style: { display: "flex", gap: T.gap12 } },
           React.createElement(AlignedWordPanel, {
             words: fibrasWords,
             seeds: seeds,
@@ -1072,6 +918,106 @@ function Texturas() {
             })
           )
         )
+      )
+    ),
+
+    // ════════════════════════════════════════
+    // TAB: IMPORTAR
+    // ════════════════════════════════════════
+    tab === "input" && React.createElement("div", null,
+      React.createElement("div", {
+        style: { display: "flex", gap: T.gap4, marginBottom: T.gap8, flexWrap: "wrap", alignItems: "center" }
+      },
+        docs.map(function(d) {
+          var active = d.id === activeInputDoc;
+          return React.createElement("div", {
+            key: d.id, style: { display: "flex", alignItems: "center", gap: 2 }
+          },
+            React.createElement("button", {
+              onClick: function() { setActiveInputDoc(d.id); },
+              style: {
+                background: active ? T.accent + "22" : T.bgCard,
+                border: "1px solid " + (active ? T.accent : T.border),
+                color: active ? T.accent : T.textMid,
+                borderRadius: T.radius3, padding: "3px 8px",
+                fontSize: T.fs10, fontFamily: T.fontMono, cursor: "pointer"
+              }
+            }, d.label),
+            docs.length > 1 && React.createElement("button", {
+              onClick: function() { removeDoc(d.id); },
+              style: {
+                background: "transparent", border: "none",
+                color: T.textFaint, cursor: "pointer",
+                fontSize: T.fs10, padding: "0 2px"
+              }
+            }, "\u00D7")
+          );
+        }),
+        React.createElement("button", {
+          onClick: addDoc,
+          style: {
+            background: "transparent", border: "1px dashed " + T.borderLight,
+            color: T.textDim, borderRadius: T.radius3,
+            padding: "3px 8px", fontSize: T.fs10,
+            fontFamily: T.fontMono, cursor: "pointer"
+          }
+        }, "+ Doc")
+      ),
+
+      activeDoc && React.createElement("div", { style: { marginBottom: T.gap8 } },
+        React.createElement("input", {
+          type: "text", value: activeDoc.label,
+          onChange: function(ev) { updateDocLabel(activeDoc.id, ev.target.value); },
+          style: {
+            background: T.bgCard, border: "1px solid " + T.border,
+            borderRadius: T.radius3, color: T.text, padding: T.pad4,
+            fontSize: T.fs12, fontFamily: T.fontMono, width: 300
+          }
+        })
+      ),
+
+      activeDoc && React.createElement("textarea", {
+        value: activeDoc.text,
+        onChange: function(ev) { updateDocText(activeDoc.id, ev.target.value); },
+        placeholder: "Pega o escribe tu texto en espa\u00F1ol aqu\u00ED...",
+        style: {
+          width: "100%", height: 300,
+          background: T.bgDeep, border: "1px solid " + T.border,
+          borderRadius: T.radius4, color: T.text, padding: T.pad12,
+          fontSize: T.fs13, fontFamily: T.fontMono,
+          resize: "vertical", lineHeight: 1.6
+        }
+      }),
+
+      React.createElement("div", {
+        style: { marginTop: T.gap8, display: "flex", gap: T.gap8, alignItems: "center" }
+      },
+        React.createElement("button", {
+          onClick: doSplit,
+          style: {
+            background: "transparent", border: "1px solid " + T.borderLight,
+            color: T.textMid, borderRadius: T.radius3,
+            padding: "4px 10px", fontSize: T.fs10,
+            fontFamily: T.fontMono, cursor: "pointer"
+          }
+        }, "Separar (---DOC:---)"),
+        React.createElement("span", { style: { fontSize: 9, color: T.textFaint } },
+          "Usa ---DOC:Nombre--- para separar m\u00FAltiples documentos"
+        )
+      ),
+
+      React.createElement("div", { style: { marginTop: T.gap16 } },
+        React.createElement("button", {
+          onClick: runAnalysis,
+          disabled: loading || engSt !== "ready",
+          style: {
+            background: T.accent, border: "none", color: T.bg,
+            borderRadius: T.radius4, padding: "8px 24px",
+            fontSize: T.fs13, fontFamily: T.fontMono, fontWeight: 500,
+            cursor: loading ? "wait" : "pointer",
+            opacity: loading || engSt !== "ready" ? 0.5 : 1
+          }
+        }, loading ? "Analizando..." : "Analizar")
       )
     ),
 
@@ -1152,7 +1098,7 @@ function Texturas() {
                   setActiveInputDoc(newDocs[0].id);
                   setSelectedViewDocs([newDocs[0].id]);
                   setMsg("Importados " + newDocs.length + " documento(s) desde TEI.");
-                  setTab("input");
+                  setTab(null);
                 }
               };
               reader.readAsText(file);
