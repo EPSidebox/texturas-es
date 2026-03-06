@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────
-// fibras-data.js — Texturas (ES) v2.1
+// fibras-data.js — Texturas (ES) v2.0
 // Pure data logic for Fibras: segmentation, word selection, layout geometry
 // No DOM, no SVG, no React, no P5 — testable in DevTools console
 // Reads: analyze.js results (enriched, freqMap, relevanceMap)
@@ -217,18 +217,26 @@ function segmentTextCustom(enriched, customSegs) {
 }
 
 // ── selectWords ──
-// persistentes: if true, only return words appearing in 2+ segments
-function selectWords(freqMap, relevanceMap, topN, sortMode, ngMode, persistentes, segments) {
+function selectWords(freqMap, relevanceMap, seeds, mode, topN, sortMode, ngMode) {
+  if (mode === "seeds") {
+    var out = [];
+    seeds.forEach(function(w) {
+      if (freqMap[w]) out.push(w);
+    });
+    return out;
+  }
+
+  var srcMap = freqMap;
   var useRelevance = ngMode === 1;
 
   var candidates = [];
   var w;
-  for (w in freqMap) {
-    if (!freqMap.hasOwnProperty(w)) continue;
+  for (w in srcMap) {
+    if (!srcMap.hasOwnProperty(w)) continue;
     if (ngMode === 1 && w.length < 2) continue;
     candidates.push({
       word: w,
-      freq: freqMap[w],
+      freq: srcMap[w],
       rel: useRelevance ? (relevanceMap[w] || 1) : 1
     });
   }
@@ -247,22 +255,8 @@ function selectWords(freqMap, relevanceMap, topN, sortMode, ngMode, persistentes
     });
   }
 
-  // Filter for persistentes: words appearing in 2+ segments
-  if (persistentes && segments) {
-    var out = [];
-    for (var ci = 0; ci < candidates.length; ci++) {
-      var cw = candidates[ci].word;
-      var segCount = 0;
-      for (var si = 0; si < segments.length; si++) {
-        var checkMap = ngMode === 2 ? (segments[si].ng2Map || {}) :
-                       ngMode === 3 ? (segments[si].ng3Map || {}) :
-                       segments[si].freqMap;
-        if (checkMap[cw]) segCount++;
-      }
-      if (segCount >= 2) out.push(cw);
-      if (out.length >= topN) break;
-    }
-    return out;
+  if (mode === "persistentes") {
+    return candidates.slice(0, topN).map(function(c) { return c.word; });
   }
 
   return candidates.slice(0, topN).map(function(c) { return c.word; });
@@ -285,6 +279,7 @@ function computeSegData(segments, nodeWords, eng, decay, relevanceMap, ngMode) {
       var baseFreq = rawMap[w] || 0;
       var normFreq = normMap[w] || 0;
 
+      // Word2vec boost — track responsible source word and similarity
       var boost = 0;
       var normBoost = 0;
       var vecSource = null;
@@ -304,6 +299,7 @@ function computeSegData(segments, nodeWords, eng, decay, relevanceMap, ngMode) {
         }
       }
 
+      // WordNet source — find highest-frequency corpus word with a synset path to w
       var wnSource = null;
       if (ngMode === 1 && baseFreq === 0 && boost === 0 && eng && eng.syn && eng.syn.ready && eng.pos && eng.pos.ready) {
         var bestWnFreq = 0;
@@ -320,6 +316,7 @@ function computeSegData(segments, nodeWords, eng, decay, relevanceMap, ngMode) {
       var localNormAct = normFreq + normBoost;
       var globalRel = (ngMode === 1 && relevanceMap && relevanceMap[w]) ? relevanceMap[w] : 1;
 
+      // Provenance
       var provenance = null;
       if (baseFreq > 0) provenance = "directo";
       else if (boost > 0) provenance = "vectorial";
@@ -353,7 +350,10 @@ function computeSegEmo(segments) {
       if (!tok.emolex) continue;
       for (var ei = 0; ei < emos.length; ei++) {
         var em = emos[ei];
-        if (tok.emolex[em]) { sums[em] += 1; counts[em] += 1; }
+        if (tok.emolex[em]) {
+          sums[em] += 1;
+          counts[em] += 1;
+        }
       }
     }
     var row = {};
@@ -367,8 +367,7 @@ function computeSegEmo(segments) {
 }
 
 // ── computeFibras ──
-// persistentes: boolean — if true, only track words appearing in 2+ segments
-function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, topN, decay, sortMode, customSegBoundaries, ngMode, persistentes) {
+function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, mode, topN, decay, sortMode, customSegBoundaries, ngMode) {
   var segments;
   var hasCustomSegs = customSegBoundaries && customSegBoundaries.length > 0;
   var ng = ngMode || 1;
@@ -397,7 +396,24 @@ function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, top
 
   var effectiveRelMap = ng === 1 ? relevanceMap : {};
 
-  var nodeWords = selectWords(globalNgMap, effectiveRelMap, topN, sortMode, ng, persistentes || false, segments);
+  var nodeWords;
+  if (mode === "persistentes") {
+    var ranked = selectWords(globalNgMap, effectiveRelMap, seeds, "recurrentes", Object.keys(globalNgMap).length, sortMode, ng);
+    var persistent = [];
+    for (var ri = 0; ri < ranked.length; ri++) {
+      var w = ranked[ri];
+      var segCount = 0;
+      for (var sci = 0; sci < segments.length; sci++) {
+        var checkMap = ng === 2 ? (segments[sci].ng2Map || {}) : ng === 3 ? (segments[sci].ng3Map || {}) : segments[sci].freqMap;
+        if (checkMap[w]) segCount++;
+      }
+      if (segCount >= 2) persistent.push(w);
+      if (persistent.length >= topN) break;
+    }
+    nodeWords = persistent;
+  } else {
+    nodeWords = selectWords(globalNgMap, effectiveRelMap, seeds, mode, topN, sortMode, ng);
+  }
 
   var segData = computeSegData(segments, nodeWords, eng, decay, relevanceMap, ng);
   var segEmo = computeSegEmo(segments);
@@ -439,8 +455,7 @@ function computeFibras(enriched, freqMap, relevanceMap, eng, seeds, numSegs, top
     decay: decay,
     vecClusterMap: vecClusterMap,
     hasCustomSegs: hasCustomSegs,
-    ngMode: ng,
-    persistentes: persistentes || false
+    ngMode: ng
   };
 }
 
@@ -564,13 +579,18 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
       }
 
       slotNodes.push({
-        col: c2, segIdx: segIdx,
+        col: c2,
+        segIdx: segIdx,
         x: columns[c2].x - nodeW / 2,
         y: y + (baseNodeH - nodeH) / 2,
-        w: nodeW, h: nodeH,
-        isReal: isReal, opacity: opacity,
-        primary: primaryVal, secondary: secondaryVal,
-        primaryNorm: primaryNorm, secondaryNorm: secondaryNorm,
+        w: nodeW,
+        h: nodeH,
+        isReal: isReal,
+        opacity: opacity,
+        primary: primaryVal,
+        secondary: secondaryVal,
+        primaryNorm: primaryNorm,
+        secondaryNorm: secondaryNorm,
         provenance: segEntry ? segEntry.provenance : null,
         provenanceSource: segEntry ? segEntry.provenanceSource : null,
         provenanceSim: segEntry ? segEntry.provenanceSim : 0
