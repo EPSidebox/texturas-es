@@ -332,13 +332,10 @@ function Texturas() {
       var res = perDocResults[id];
       if (!res) continue;
       var csb = customSegsByDoc[id] || null;
-      map[id] = computeFibras(
-        res.enriched, res.freqMap, res.relevanceMap, eng,
-        seeds, fibrasSegs, fibrasMode, topN, decay,
-        sortBy === "relevance" ? "relevance" : "freq",
-        csb,
-        ngMode
-      );
+      map[id] = computeFibras(enriched, freqMap, relevanceMap, eng,
+  seeds, fibrasSegs, topN, decay,
+  sortBy === "relevance" ? "relevance" : "freq",
+  csb, ngMode, false);
     }
     return map;
   }, [selectedViewDocs, perDocResults, seeds, fibrasSegs, fibrasMode, topN, decay, sortBy, customSegsByDoc, ngMode]);
