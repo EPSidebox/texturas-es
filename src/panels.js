@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────
-// panels.js — Texturas (ES) v2.0
+// panels.js — Texturas (ES) v2.1
 // Unified word panel + emotion toggle
 // Reads: T, EC from config.js
 // Reads: React hook aliases from config.js
@@ -7,9 +7,6 @@
 // ─────────────────────────────────────────────
 
 // ── EmoToggle4 — 4 inline emotion buttons ──
-// Props: {enabledEmos, setEnabledEmos}
-// enabledEmos: Set of enabled emotion keys
-// setEnabledEmos: setter function
 var _emoToggle4Items = [
   { key: "joy",     label: "Felicidad", color: "#82e0aa" },
   { key: "fear",    label: "Miedo",     color: "#85c1e9" },
@@ -29,7 +26,7 @@ function EmoToggle4(props) {
   }
 
   return React.createElement("div", {
-    style: { display: "flex", gap: T.gap6, flexWrap: "wrap" }
+    style: { display: "flex", gap: T.gap4, flexWrap: "wrap" }
   }, _emoToggle4Items.map(function(item) {
     var on = enabledEmos.has(item.key);
     return React.createElement("button", {
@@ -50,59 +47,56 @@ function EmoToggle4(props) {
   }));
 }
 
-// ── WordPanel — Unified word list + seed management ──
+// ── WordPanel ──
 // Props: {
-//   words,          — array of {word, freq, rel} to display (synced with Fibras)
+//   words,          — array of {word, freq, rel} to display
 //   seeds,          — Set of active seed words
 //   toggleSeed,     — function(word)
 //   seedInput,      — controlled input value
 //   setSeedInput,   — setter
 //   setSeeds,       — setter for full seed Set
-//   sortBy,         — "freq" | "relevance" | "alpha"
+//   sortBy,         — "freq" | "relevance"
 //   setSortBy,      — setter
-//   ngMode,         — 1 | 2 | 3 (unigrams, bigrams, trigrams)
+//   ngMode,         — 1 | 2 | 3
 //   setNgMode,      — setter
+//   enabledEmos,    — Set of enabled emotion keys
+//   setEnabledEmos, — setter
 //   freqMap,        — full frequency map (for seed input validation)
-//   maxFreq,        — for bar normalization
-//   maxRel,         — for bar normalization
+//   maxFreq,        — for display normalization
+//   maxRel,         — for display normalization
 // }
 function WordPanel(props) {
-  var words = props.words || [];
-  var seeds = props.seeds;
-  var toggleSeed = props.toggleSeed;
-  var seedInput = props.seedInput;
+  var words        = props.words || [];
+  var seeds        = props.seeds;
+  var toggleSeed   = props.toggleSeed;
+  var seedInput    = props.seedInput;
   var setSeedInput = props.setSeedInput;
-  var setSeeds = props.setSeeds;
-  var sortBy = props.sortBy;
-  var setSortBy = props.setSortBy;
-  var ngMode = props.ngMode || 1;
-  var setNgMode = props.setNgMode;
-  var freqMap = props.freqMap || {};
-  var maxFreq = props.maxFreq || 1;
-  var maxRel = props.maxRel || 1;
-
-  // Manual seeds tracking (typed in, not clicked)
-  var _ms = useState(new Set());
-  var manualSeeds = _ms[0], setManualSeeds = _ms[1];
+  var setSeeds     = props.setSeeds;
+  var sortBy       = props.sortBy;
+  var setSortBy    = props.setSortBy;
+  var ngMode       = props.ngMode || 1;
+  var setNgMode    = props.setNgMode;
+  var enabledEmos  = props.enabledEmos;
+  var setEnabledEmos = props.setEnabledEmos;
+  var freqMap      = props.freqMap || {};
+  var maxFreq      = props.maxFreq || 1;
+  var maxRel       = props.maxRel || 1;
 
   // Not-found feedback
   var _nf = useState(false);
   var notFound = _nf[0], setNotFound = _nf[1];
   var _nfTimer = useRef(null);
 
-  // Sort the display list independently from Fibras ordering
+  // Sort the display list
   var sorted = useMemo(function() {
     var arr = words.slice();
-    if (sortBy === "alpha") {
-      arr.sort(function(a, b) { return a.word.localeCompare(b.word); });
-    } else if (sortBy === "relevance") {
+    if (sortBy === "relevance") {
       arr.sort(function(a, b) {
         if (b.rel !== a.rel) return b.rel - a.rel;
         if (b.freq !== a.freq) return b.freq - a.freq;
         return a.word.localeCompare(b.word);
       });
     } else {
-      // freq (default)
       arr.sort(function(a, b) {
         if (b.freq !== a.freq) return b.freq - a.freq;
         if (b.rel !== a.rel) return b.rel - a.rel;
@@ -117,15 +111,10 @@ function WordPanel(props) {
     var val = seedInput.trim().toLowerCase();
     if (!val) return;
     if (freqMap[val]) {
-      // Add as manual seed
-      var nextManual = new Set(manualSeeds);
-      nextManual.add(val);
-      setManualSeeds(nextManual);
       if (!seeds.has(val)) toggleSeed(val);
       setSeedInput("");
       setNotFound(false);
     } else {
-      // Not found — show red feedback for 3s
       setNotFound(true);
       if (_nfTimer.current) clearTimeout(_nfTimer.current);
       _nfTimer.current = setTimeout(function() { setNotFound(false); }, 3000);
@@ -134,7 +123,6 @@ function WordPanel(props) {
 
   var seedCount = seeds ? seeds.size : 0;
 
-  // ── Render ──
   return React.createElement("div", {
     style: {
       width: T.wordPanelW,
@@ -146,7 +134,7 @@ function WordPanel(props) {
       fontSize: T.fs10
     }
   },
-    // Seed input
+    // ── Seed input ──
     React.createElement("div", { style: { position: "relative" } },
       React.createElement("input", {
         type: "text",
@@ -163,61 +151,16 @@ function WordPanel(props) {
           padding: T.pad4,
           fontSize: T.fs10,
           fontFamily: T.fontMono,
-          outline: "none"
+          outline: "none",
+          boxSizing: "border-box"
         }
       }),
       notFound && React.createElement("div", {
-        style: {
-          color: T.negative,
-          fontSize: 9,
-          marginTop: 2
-        }
+        style: { color: T.negative, fontSize: 9, marginTop: 2 }
       }, "No encontrado")
     ),
 
-    // Clear all + sort toggles
-    React.createElement("div", {
-      style: { display: "flex", justifyContent: "space-between", alignItems: "center" }
-    },
-      // Clear button
-      seedCount > 0 && React.createElement("button", {
-        onClick: function() { setSeeds(new Set()); setManualSeeds(new Set()); },
-        style: {
-          background: "transparent",
-          border: "1px solid " + T.borderLight,
-          color: T.textMid,
-          borderRadius: T.radius3,
-          padding: "1px 5px",
-          fontSize: 9,
-          fontFamily: T.fontMono,
-          cursor: "pointer"
-        }
-      }, "Limpiar (" + seedCount + ")"),
-
-      // Sort toggles
-      React.createElement("div", { style: { display: "flex", gap: 2 } },
-        ["freq", "relevance", "alpha"].map(function(mode) {
-          var label = mode === "freq" ? "Frec" : mode === "relevance" ? "Rel" : "A-Z";
-          var active = sortBy === mode;
-          return React.createElement("button", {
-            key: mode,
-            onClick: function() { setSortBy(mode); },
-            style: {
-              background: active ? T.accent + "22" : "transparent",
-              border: "1px solid " + (active ? T.accent : T.border),
-              color: active ? T.accent : T.textDim,
-              borderRadius: T.radius3,
-              padding: "1px 4px",
-              fontSize: 9,
-              fontFamily: T.fontMono,
-              cursor: "pointer"
-            }
-          }, label);
-        })
-      )
-    ),
-
-    // N-gram toggle
+    // ── N-grama selector ──
     setNgMode && React.createElement("div", {
       style: { display: "flex", justifyContent: "space-between", alignItems: "center" }
     },
@@ -243,7 +186,53 @@ function WordPanel(props) {
       )
     ),
 
-    // Word list
+    // ── Emotion toggles ──
+    enabledEmos && setEnabledEmos && React.createElement(EmoToggle4, {
+      enabledEmos: enabledEmos,
+      setEnabledEmos: setEnabledEmos
+    }),
+
+    // ── Sort + clear row ──
+    React.createElement("div", {
+      style: { display: "flex", justifyContent: "space-between", alignItems: "center" }
+    },
+      seedCount > 0 && React.createElement("button", {
+        onClick: function() { setSeeds(new Set()); },
+        style: {
+          background: "transparent",
+          border: "1px solid " + T.borderLight,
+          color: T.textMid,
+          borderRadius: T.radius3,
+          padding: "1px 5px",
+          fontSize: 9,
+          fontFamily: T.fontMono,
+          cursor: "pointer"
+        }
+      }, "Limpiar (" + seedCount + ")"),
+
+      React.createElement("div", { style: { display: "flex", gap: 2, marginLeft: "auto" } },
+        ["freq", "relevance"].map(function(mode) {
+          var label = mode === "freq" ? "Frec" : "Rel";
+          var active = sortBy === mode;
+          return React.createElement("button", {
+            key: mode,
+            onClick: function() { setSortBy(mode); },
+            style: {
+              background: active ? T.accent + "22" : "transparent",
+              border: "1px solid " + (active ? T.accent : T.border),
+              color: active ? T.accent : T.textDim,
+              borderRadius: T.radius3,
+              padding: "1px 4px",
+              fontSize: 9,
+              fontFamily: T.fontMono,
+              cursor: "pointer"
+            }
+          }, label);
+        })
+      )
+    ),
+
+    // ── Word list ──
     React.createElement("div", {
       style: {
         flex: 1,
@@ -256,11 +245,8 @@ function WordPanel(props) {
       sorted.map(function(item) {
         var w = item.word;
         var isSeed = seeds.has(w);
-        var isManual = manualSeeds.has(w);
-
-        // Highlight active sort metric
         var freqColor = sortBy === "freq" ? T.accent : T.textDim;
-        var relColor = sortBy === "relevance" ? T.flow : T.textDim;
+        var relColor  = sortBy === "relevance" ? T.flow : T.textDim;
 
         return React.createElement("div", {
           key: w,
@@ -276,12 +262,6 @@ function WordPanel(props) {
             borderLeft: isSeed ? "2px solid " + T.accent : "2px solid transparent"
           }
         },
-          // Manual seed marker
-          isManual && React.createElement("span", {
-            style: { color: "#f0b27a", fontSize: 9, marginRight: 1 }
-          }, "\u2605"),
-
-          // Word
           React.createElement("span", {
             style: {
               flex: 1,
@@ -292,8 +272,6 @@ function WordPanel(props) {
               whiteSpace: "nowrap"
             }
           }, w),
-
-          // Freq | Rel display
           React.createElement("span", {
             style: { fontSize: 9, color: freqColor, minWidth: 18, textAlign: "right" }
           }, item.freq),
