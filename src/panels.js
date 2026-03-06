@@ -14,36 +14,20 @@ var _EMO_PANEL = [
   { key: "anger",   label: "Ira",       color: "#ff6b6b" }
 ];
 
-// ── WordPanel ──
-// Props: {
-//   words,          — [{word, freq, rel}] in Sankey rank order
-//   seeds,          — Set of active seed words
-//   toggleSeed,     — function(word)
-//   seedInput,      — controlled input value
-//   setSeedInput,   — setter
-//   setSeeds,       — setter for full seed Set
-//   sortBy,         — "freq" | "relevance"
-//   enabledEmos,    — Set of enabled emotion keys
-//   setEnabledEmos, — setter
-//   ngMode,         — 1 | 2 | 3
-//   setNgMode,      — setter
-//   freqMap,        — full frequency map (for seed input validation)
-//   rowH,           — px height per word row (for alignment with Sankey)
-// }
 function WordPanel(props) {
-  var words        = props.words || [];
-  var seeds        = props.seeds;
-  var toggleSeed   = props.toggleSeed;
-  var seedInput    = props.seedInput;
-  var setSeedInput = props.setSeedInput;
-  var setSeeds     = props.setSeeds;
-  var sortBy       = props.sortBy;
-  var enabledEmos  = props.enabledEmos;
+  var words          = props.words || [];
+  var seeds          = props.seeds;
+  var toggleSeed     = props.toggleSeed;
+  var seedInput      = props.seedInput;
+  var setSeedInput   = props.setSeedInput;
+  var setSeeds       = props.setSeeds;
+  var sortBy         = props.sortBy;
+  var enabledEmos    = props.enabledEmos;
   var setEnabledEmos = props.setEnabledEmos;
-  var ngMode       = props.ngMode || 1;
-  var setNgMode    = props.setNgMode;
-  var freqMap      = props.freqMap || {};
-  var rowH         = props.rowH || 20;
+  var ngMode         = props.ngMode || 1;
+  var setNgMode      = props.setNgMode;
+  var freqMap        = props.freqMap || {};
+  var rowH           = props.rowH || 20;
 
   var _nf = useState(false);
   var notFound = _nf[0], setNotFound = _nf[1];
@@ -71,16 +55,14 @@ function WordPanel(props) {
     setEnabledEmos(next);
   }
 
-  var seedCount = seeds ? seeds.size : 0;
-  var freqColor = sortBy === "freq" ? T.accent : T.textDim;
-  var relColor  = sortBy === "relevance" ? T.flow : T.textDim;
+  var seedCount  = seeds ? seeds.size : 0;
+  var freqColor  = sortBy === "freq" ? T.accent : T.textDim;
+  var relColor   = sortBy === "relevance" ? T.flow : T.textDim;
 
   return React.createElement("div", {
     style: {
       width: T.wordPanelW,
       minWidth: T.wordPanelW,
-      display: "flex",
-      flexDirection: "column",
       fontFamily: T.fontMono,
       fontSize: T.fs10,
       flexShrink: 0
@@ -126,12 +108,12 @@ function WordPanel(props) {
         fontFamily: T.fontMono,
         cursor: "pointer",
         marginBottom: T.gap4,
-        alignSelf: "flex-start"
+        display: "block"
       }
     }, "Limpiar (" + seedCount + ")"),
 
-    // ── Word list — rows aligned to Sankey, natural height ──
-    React.createElement("div", { style: {} },
+    // ── Word list ──
+    React.createElement("div", { style: { marginBottom: T.gap6 } },
       words.map(function(item) {
         var w = item.word;
         var isSeed = seeds.has(w);
@@ -179,9 +161,9 @@ function WordPanel(props) {
         display: "flex",
         flexWrap: "wrap",
         gap: 2,
-        marginTop: T.gap6,
         paddingTop: T.gap6,
-        borderTop: "1px solid " + T.border
+        borderTop: "1px solid " + T.border,
+        marginBottom: T.gap4
       }
     },
       _EMO_PANEL.map(function(item) {
@@ -206,7 +188,7 @@ function WordPanel(props) {
 
     // ── N-gram selector ──
     React.createElement("div", {
-      style: { display: "flex", gap: 2, marginTop: T.gap4 }
+      style: { display: "flex", gap: 2 }
     },
       [1, 2, 3].map(function(n) {
         var active = ngMode === n;
