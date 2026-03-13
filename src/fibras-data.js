@@ -472,7 +472,7 @@ function buildWindowedLayout(fibras, winStart, winSize, seeds, sortMode, colorMo
   var winEnd = Math.min(winStart + winSize, numSegs);
   var numCols = winEnd - winStart;
 
-  var padLeft = 80;
+  var padLeft = 180;
   var padRight = 20;
   var padTop = 20;
   var emoBarH = 40;
