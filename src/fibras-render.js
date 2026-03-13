@@ -1,7 +1,6 @@
 // ─────────────────────────────────────────────
 // fibras-render.js — Texturas (ES) v2.0
 // P5 canvas rendering for Fibras visualization
-// Canonical Sankey transparency, HSL color model
 // Reads: T, EC, CC from config.js
 // Reads: buildWindowedLayout from fibras-data.js
 // Reads: React hook aliases from config.js
@@ -97,7 +96,7 @@ function _polarityToRgb(pol) {
   return _polNeutral;
 }
 
-// ── Ribbon drawing ──
+// ── Straight trapezoid ribbon (same-stream adjacent links) ──
 function _drawRibbon(p, sT, sB, sR, tT, tB, tL, getColor, steps) {
   var baseCp = (tL - sR) / 3;
   var cpT = baseCp + Math.abs(tT - sT) * 0.4;
@@ -123,6 +122,101 @@ function _drawRibbon(p, sT, sB, sR, tT, tB, tL, getColor, steps) {
   }
 }
 
+// ── Cosine S-curve ribbon (cross-stream links) ──
+function _drawBezierRibbon(p, sT, sB, sR, tT, tB, tL, getColor, steps) {
+  var mx = (sR + tL) / 2;
+  p.noStroke();
+  for (var si = 0; si < steps; si++) {
+    var t0 = si / steps, t1 = (si + 1) / steps, tMid = (t0 + t1) / 2;
+    var x0 = p.bezierPoint(sR, mx, mx, tL, t0);
+    var x1 = p.bezierPoint(sR, mx, mx, tL, t1);
+    var y0t = p.bezierPoint(sT, sT, tT, tT, t0);
+    var y1t = p.bezierPoint(sT, sT, tT, tT, t1);
+    var y0b = p.bezierPoint(sB, sB, tB, tB, t0);
+    var y1b = p.bezierPoint(sB, sB, tB, tB, t1);
+    p.fill(getColor(tMid));
+    p.beginShape();
+    p.vertex(x0, y0t); p.vertex(x1, y1t);
+    p.vertex(x1, y1b); p.vertex(x0, y0b);
+    p.endShape(p.CLOSE);
+  }
+}
+
+// ── Label column overlay builder ──
+// Renders the interactive word list over the padLeft zone of the P5 canvas.
+function _buildLabelOverlay(layout, seeds, lockedWords, sortMode, onWordClick) {
+  var padLeft = layout.padLeft;
+  var hasHL = !!(seeds && seeds.size > 0);
+  var fhc = sortMode === "freq" ? T.text : T.flow;
+  var rhc = sortMode === "relevance" ? T.text : T.flow;
+
+  var rows = layout.wordSlots.map(function(slot) {
+    var isSeed   = !!(seeds && seeds.has(slot.word));
+    var isLocked = !!(lockedWords && lockedWords.has(slot.word));
+    var isDim    = hasHL && !isSeed && !isLocked;
+    var fc = sortMode === "freq"      ? (isDim ? "#181818" : T.text) : (isDim ? "#0c1818" : T.flow);
+    var rc = sortMode === "relevance" ? (isDim ? "#181818" : T.text) : (isDim ? "#0c1818" : T.flow);
+    var wc = (isSeed || isLocked) ? T.accent : isDim ? "#222" : T.text;
+    var sc = isDim ? "#1c1c1c" : "#333";
+    var bg = (isSeed || isLocked) ? T.accent + "14" : "transparent";
+    var lb = (isSeed || isLocked) ? "2px solid " + T.accent : "2px solid transparent";
+    return React.createElement("div", {
+      key: slot.word,
+      onClick: function(ev) {
+        ev.stopPropagation();
+        if (onWordClick) onWordClick(slot.word);
+      },
+      style: {
+        position: "absolute",
+        top: slot.y, left: 0, right: 0,
+        height: slot.slotH,
+        display: "flex", alignItems: "center",
+        background: bg, borderLeft: lb,
+        cursor: "pointer", boxSizing: "border-box",
+        fontFamily: T.fontMono
+      }
+    },
+      React.createElement("div", {
+        style: { width: 74, display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 5, flexShrink: 0 }
+      },
+        React.createElement("span", { style: { fontSize: 9, color: fc, minWidth: 20, textAlign: "right", lineHeight: 1 } }, slot.freq),
+        React.createElement("span", { style: { fontSize: 9, color: sc, padding: "0 2px", lineHeight: 1 } }, "|"),
+        React.createElement("span", { style: { fontSize: 9, color: rc, minWidth: 26, textAlign: "right", lineHeight: 1 } }, (slot.rel || 1).toFixed(1))
+      ),
+      React.createElement("div", {
+        style: { flex: 1, minWidth: 0, display: "flex", justifyContent: "flex-end", paddingRight: 7 }
+      },
+        React.createElement("span", {
+          style: { fontSize: 9, color: wc, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 98 }
+        }, slot.word)
+      )
+    );
+  });
+
+  return React.createElement("div", {
+    style: {
+      position: "absolute", top: 0, left: 0,
+      width: padLeft, height: layout.canvasH,
+      background: T.bgDeep,
+      borderRight: "1px solid " + T.border,
+      overflow: "hidden", zIndex: 2
+    }
+  },
+    React.createElement("div", {
+      style: {
+        position: "absolute", top: 0, right: 7,
+        height: layout.padTop, display: "flex", alignItems: "center",
+        fontFamily: T.fontMono
+      }
+    },
+      React.createElement("span", { style: { fontSize: 8, color: fhc, minWidth: 20, textAlign: "right", lineHeight: 1 } }, "frec"),
+      React.createElement("span", { style: { fontSize: 8, color: T.textDim, padding: "0 2px", lineHeight: 1 } }, "|"),
+      React.createElement("span", { style: { fontSize: 8, color: rhc, minWidth: 26, textAlign: "right", lineHeight: 1 } }, "rel")
+    ),
+    rows
+  );
+}
+
 // ════════════════════════════════════════════
 // FibrasChart — P5 canvas
 // ════════════════════════════════════════════
@@ -141,7 +235,6 @@ function FibrasChart(props) {
   var hoveredNodeRef   = useRef(null);
   var pinnedTooltipRef = useRef(null);
 
-  // Expose clearAllPins to parent via prop callback
   useEffect(function() {
     if (props.onRegisterClear) {
       props.onRegisterClear(function() {
@@ -254,16 +347,7 @@ function FibrasChart(props) {
             p.noStroke();
             p.rect(nd.x, nd.y, nd.w, nd.h);
           }
-
-          if (active || !hasHL) {
-            p.textSize(9); p.textAlign(p.RIGHT, p.CENTER);
-            p.fill(p.color(180, 180, 180, active ? 0.85 : 0.15));
-            p.noStroke();
-            for (var lci = 0; lci < slot.labelCols.length; lci++) {
-              var ln = slot.nodes[slot.labelCols[lci]];
-              if (ln && ln.isReal) p.text(slot.word, ln.x - 4, ln.y + ln.h / 2);
-            }
-          }
+          // Word labels removed — replaced by React label column overlay
         }
 
         if (lay.crossLinks) {
@@ -275,7 +359,7 @@ function FibrasChart(props) {
             var cSrcOp = clActive ? cs.opacity : 0.06;
             var cTgtOp = clActive ? ct.opacity : 0.06;
             (function(cs, ct, srcHsl, tgtHsl, cSrcOp, cTgtOp) {
-              _drawRibbon(p, cs.y, cs.y + cs.h, cs.x + cs.w, ct.y, ct.y + ct.h, ct.x,
+              _drawBezierRibbon(p, cs.y, cs.y + cs.h, cs.x + cs.w, ct.y, ct.y + ct.h, ct.x,
                 function(t) {
                   var mh = _lerpHsl(srcHsl, tgtHsl, t);
                   var mr = _hslToRgb(mh[0], mh[1], mh[2]);
@@ -314,6 +398,13 @@ function FibrasChart(props) {
         if (!lay) return;
         var mx = p.mouseX, my = p.mouseY;
         if (mx < 0 || mx > lay.canvasW || my < 0 || my > lay.canvasH) {
+          hoveredStreamRef.current = null; setHoveredStream(null);
+          hoveredNodeRef.current   = null; setHoveredNode(null);
+          setTooltipData(null);
+          p.redraw(); return;
+        }
+        // Ignore mouse events in the label column zone
+        if (mx < lay.padLeft) {
           hoveredStreamRef.current = null; setHoveredStream(null);
           hoveredNodeRef.current   = null; setHoveredNode(null);
           setTooltipData(null);
@@ -367,6 +458,8 @@ function FibrasChart(props) {
         if (!lay) return;
         var mx = p.mouseX, my = p.mouseY;
         if (mx < 0 || mx > lay.canvasW || my < 0 || my > lay.canvasH) return;
+        // Ignore clicks in label column zone — handled by React overlay
+        if (mx < lay.padLeft) return;
         var HIT = 7;
 
         for (var wi = 0; wi < lay.wordSlots.length; wi++) {
@@ -464,12 +557,23 @@ function FibrasChart(props) {
     );
   }
 
-  return React.createElement("div", { style: { position: "relative" } },
+  // Outer div gets border/radius/overflow so label overlay aligns flush with canvas top
+  return React.createElement("div", {
+    style: {
+      position: "relative",
+      border: "1px solid " + T.border,
+      borderRadius: T.radius6,
+      overflow: "hidden"
+    }
+  },
     React.createElement("div", {
       ref: containerRef,
       onClick: function(ev) { ev.stopPropagation(); },
-      style: { background: T.bg, borderRadius: T.radius6, border: "1px solid " + T.border, overflow: "hidden" }
+      style: { background: T.bg }
     }),
+    props.layout && _buildLabelOverlay(
+      props.layout, props.seeds, props.lockedWords, props.sortMode, props.onWordClick
+    ),
     buildTipEl(tooltipData, false),
     buildTipEl(pinnedTooltip, true)
   );
@@ -486,10 +590,8 @@ function FibrasMinimap(props) {
   var chartWidth  = props.chartWidth || 700;
   var segPolarity = props.segPolarity || [];
   var segArousal  = props.segArousal  || [];
-  // pinnedSeg lifted to FibrasDocStack
   var pinnedSeg    = props.pinnedSeg;
   var setPinnedSeg = props.setPinnedSeg;
-
   var tipData    = props.tipData;
   var setTipData = props.setTipData;
 
@@ -732,6 +834,7 @@ function FibrasDocStack(props) {
   var canvasW      = props.canvasW || 800;
   var canvasH      = props.canvasH || 500;
   var engProp      = props.eng;
+  var onWordClick  = props.onWordClick;
   var winSize      = 10;
 
   var _ws  = useState(0);    var winStart  = _ws[0],  setWinStart  = _ws[1];
@@ -742,7 +845,6 @@ function FibrasDocStack(props) {
   var _segTip = useState(null); var segTooltip = _segTip[0], setSegTooltip = _segTip[1];
   var _segPin = useState(null); var segPinned  = _segPin[0], setSegPinned  = _segPin[1];
 
-  // Ref so the P5 canvas can call clearAllPins without closure staleness
   var clearAllPinsRef = useRef(null);
 
   function clearAllPins() {
@@ -770,8 +872,12 @@ function FibrasDocStack(props) {
 
   if (!fibras) return null;
 
-  var chartAreaW = canvasW - (layout ? layout.padLeft : 80) - 20;
-  var segLabels  = layout ? layout.columns.map(function(col) {
+  // padLeft comes from layout (set in buildWindowedLayout in fibras-data.js)
+  var padLeft    = layout ? layout.padLeft : 80;
+  var padRight   = 20;
+  var chartAreaW = canvasW - padLeft - padRight;
+
+  var segLabels = layout ? layout.columns.map(function(col) {
     return { segIdx: col.segIdx, x: col.x, label: col.label };
   }) : [];
   var activeTip = segPinned || segTooltip;
@@ -784,10 +890,11 @@ function FibrasDocStack(props) {
       style: { fontSize: T.fs10, color: T.textMid, fontFamily: T.fontMono }
     }, props.docLabel),
 
-    React.createElement("div", { style: { marginLeft: (layout ? layout.padLeft : 80) - 66, marginRight: -14 } },
+    // Minimap: offset so bar aligns with chart area (nav buttons sit in padLeft zone)
+    React.createElement("div", { style: { marginLeft: padLeft - 32 } },
       React.createElement(FibrasMinimap, {
         numSegs: fibras.numSegs, winStart: winStart, winSize: winSize,
-        setWinStart: setWinStart, chartWidth: chartAreaW + 66 + 14,
+        setWinStart: setWinStart, chartWidth: chartAreaW,
         segPolarity: layout ? layout.segPolarity : [],
         segArousal:  layout ? layout.segArousal  : [],
         pinnedSeg: mmPinned, setPinnedSeg: setMmPinned,
@@ -842,7 +949,9 @@ function FibrasDocStack(props) {
       layout: layout, seeds: seeds,
       lockedWords: lockedWords, toggleLocked: toggleLocked,
       clearLocked: clearLocked, clearAllPins: clearAllPins,
-      enabledEmos: enabledEmos
+      enabledEmos: enabledEmos,
+      sortMode: sortMode,
+      onWordClick: onWordClick
     })
   );
 }
@@ -866,6 +975,7 @@ function FibrasMultiDoc(props) {
   var canvasW       = props.canvasW || 800;
   var canvasH       = props.canvasH || 500;
   var engProp       = props.eng;
+  var onWordClick   = props.onWordClick;
 
   if (selectedArr.length === 0) {
     return React.createElement("div", {
@@ -885,7 +995,8 @@ function FibrasMultiDoc(props) {
       fibras: fibrasDataMap[id], seeds: seeds, enabledEmos: enabledEmos,
       docLabel: doc ? doc.label : "", sortMode: sortMode, colorMode: colorMode,
       lockedWords: lockedWords, toggleLocked: toggleLocked, clearLocked: clearLocked,
-      commMap: commMapByDoc[id], canvasW: canvasW, canvasH: canvasH, eng: engProp
+      commMap: commMapByDoc[id], canvasW: canvasW, canvasH: canvasH, eng: engProp,
+      onWordClick: onWordClick
     });
   }
 
@@ -897,7 +1008,8 @@ function FibrasMultiDoc(props) {
         key: did, fibras: fibrasDataMap[did], seeds: seeds, enabledEmos: enabledEmos,
         docLabel: doc ? doc.label : "", sortMode: sortMode, colorMode: colorMode,
         lockedWords: lockedWords, toggleLocked: toggleLocked, clearLocked: clearLocked,
-        commMap: commMapByDoc[did], canvasW: canvasW, canvasH: stackH, eng: engProp
+        commMap: commMapByDoc[did], canvasW: canvasW, canvasH: stackH, eng: engProp,
+        onWordClick: onWordClick
       });
     })
   );
