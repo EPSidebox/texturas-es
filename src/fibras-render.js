@@ -289,8 +289,20 @@ function FibrasChart(props) {
 
         for (var wi = lay.wordSlots.length - 1; wi >= 0; wi--) {
           var slot = lay.wordSlots[wi];
-          var rgb  = _hexToRgb(slot.color);
+          var hsl  = _hexToHsl(slot.color);
+          var natL = hsl[2];
           var active = isWordActive(slot.word);
+
+          // Compute HSL lightness for a node given its secondaryNorm and active state.
+          // Active: L ranges from 20 (low secondary) up to the color's natural L (high secondary).
+          // Dimmed: L = 7 (near-black, fully opaque — no transparency stacking).
+          function nodeL(secondaryNorm, isActive) {
+            return isActive ? (20 + secondaryNorm * Math.max(0, natL - 20)) : 7;
+          }
+          function nodeRgb(secondaryNorm, isActive) {
+            var L = nodeL(secondaryNorm, isActive);
+            return _hslToRgb(hsl[0], hsl[1], L);
+          }
 
           for (var ci = 0; ci < lay.numCols - 1; ci++) {
             var src = slot.nodes[ci];
@@ -304,11 +316,15 @@ function FibrasChart(props) {
               if (!isCrossSrc) {
                 var gX = tgt.x, gCy = tgt.y + (slot.slotH / 2), gH = Math.max(2, src.h * 0.3);
                 var gT = gCy - gH / 2, gB = gCy + gH / 2;
-                var sOp = active ? src.opacity : 0.06;
-                (function(src, gT, gB, gX, rgb, sOp) {
+                (function(src, gT, gB, gX, hsl, natL, active) {
+                  var sL = nodeL(src.secondaryNorm, active);
                   _drawRibbon(p, src.y, src.y + src.h, src.x + src.w, gT, gB, gX,
-                    function(t) { return p.color(rgb[0], rgb[1], rgb[2], sOp * (1 - t)); }, 16);
-                })(src, gT, gB, gX, rgb, sOp);
+                    function(t) {
+                      var L = Math.max(0, sL * (1 - t));
+                      var c = _hslToRgb(hsl[0], hsl[1], L);
+                      return p.color(c[0], c[1], c[2], 1.0);
+                    }, 16);
+                })(src, gT, gB, gX, hsl, natL, active);
               }
               continue;
             }
@@ -321,29 +337,37 @@ function FibrasChart(props) {
               if (!isCrossTgt) {
                 var gX2 = src.x + src.w, gCy2 = src.y + (slot.slotH / 2), gH2 = Math.max(2, tgt.h * 0.3);
                 var gT2 = gCy2 - gH2 / 2, gB2 = gCy2 + gH2 / 2;
-                var tOp = active ? tgt.opacity : 0.06;
-                (function(tgt, gT2, gB2, gX2, rgb, tOp) {
+                (function(tgt, gT2, gB2, gX2, hsl, natL, active) {
+                  var tL = nodeL(tgt.secondaryNorm, active);
                   _drawRibbon(p, gT2, gB2, gX2, tgt.y, tgt.y + tgt.h, tgt.x,
-                    function(t) { return p.color(rgb[0], rgb[1], rgb[2], tOp * t); }, 16);
-                })(tgt, gT2, gB2, gX2, rgb, tOp);
+                    function(t) {
+                      var L = Math.max(0, tL * t);
+                      var c = _hslToRgb(hsl[0], hsl[1], L);
+                      return p.color(c[0], c[1], c[2], 1.0);
+                    }, 16);
+                })(tgt, gT2, gB2, gX2, hsl, natL, active);
               }
               continue;
             }
 
             if (!src.isReal || !tgt.isReal) continue;
-            (function(src, tgt, rgb, active) {
-              var sOp = active ? src.opacity : 0.06;
-              var tOp = active ? tgt.opacity : 0.06;
+            (function(src, tgt, hsl, natL, active) {
+              var sL = nodeL(src.secondaryNorm, active);
+              var tL = nodeL(tgt.secondaryNorm, active);
               _drawRibbon(p, src.y, src.y + src.h, src.x + src.w, tgt.y, tgt.y + tgt.h, tgt.x,
-                function(t) { return p.color(rgb[0], rgb[1], rgb[2], sOp + (tOp - sOp) * t); }, 16);
-            })(src, tgt, rgb, active);
+                function(t) {
+                  var L = sL + (tL - sL) * t;
+                  var c = _hslToRgb(hsl[0], hsl[1], L);
+                  return p.color(c[0], c[1], c[2], 1.0);
+                }, 16);
+            })(src, tgt, hsl, natL, active);
           }
 
           for (var ni = 0; ni < slot.nodes.length; ni++) {
             var nd = slot.nodes[ni];
             if (!nd.isReal) continue;
-            var ndOp = active ? nd.opacity : 0.06;
-            p.fill(p.color(rgb[0], rgb[1], rgb[2], ndOp));
+            var ndC = nodeRgb(nd.secondaryNorm, active);
+            p.fill(p.color(ndC[0], ndC[1], ndC[2], 1.0));
             p.noStroke();
             p.rect(nd.x, nd.y, nd.w, nd.h);
           }
@@ -356,16 +380,18 @@ function FibrasChart(props) {
             var clActive = isWordActive(cl.srcWord) || isWordActive(cl.tgtWord);
             var cs = cl.srcNode, ct = cl.tgtNode;
             var srcHsl = _hexToHsl(cl.srcColor), tgtHsl = _hexToHsl(cl.tgtColor);
-            var cSrcOp = clActive ? cs.opacity : 0.06;
-            var cTgtOp = clActive ? ct.opacity : 0.06;
-            (function(cs, ct, srcHsl, tgtHsl, cSrcOp, cTgtOp) {
+            var srcNatL = srcHsl[2], tgtNatL = tgtHsl[2];
+            (function(cs, ct, srcHsl, tgtHsl, srcNatL, tgtNatL, clActive) {
+              var sL = clActive ? (20 + cs.secondaryNorm * Math.max(0, srcNatL - 20)) : 7;
+              var tL = clActive ? (20 + ct.secondaryNorm * Math.max(0, tgtNatL - 20)) : 7;
               _drawBezierRibbon(p, cs.y, cs.y + cs.h, cs.x + cs.w, ct.y, ct.y + ct.h, ct.x,
                 function(t) {
                   var mh = _lerpHsl(srcHsl, tgtHsl, t);
-                  var mr = _hslToRgb(mh[0], mh[1], mh[2]);
-                  return p.color(mr[0], mr[1], mr[2], cSrcOp + (cTgtOp - cSrcOp) * t);
+                  var L = sL + (tL - sL) * t;
+                  var c = _hslToRgb(mh[0], mh[1], L);
+                  return p.color(c[0], c[1], c[2], 1.0);
                 }, 16);
-            })(cs, ct, srcHsl, tgtHsl, cSrcOp, cTgtOp);
+            })(cs, ct, srcHsl, tgtHsl, srcNatL, tgtNatL, clActive);
           }
         }
 
