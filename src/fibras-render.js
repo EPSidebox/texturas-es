@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────
 // fibras-render.js — Texturas (ES) v2.0
-// P5 canvas rendering for Fibras visualization
+// Ridgeline visualization for Fibras
 // Reads: T, EC, CC from config.js
 // Reads: buildWindowedLayout from fibras-data.js
 // Reads: React hook aliases from config.js
@@ -22,23 +22,23 @@ var _PROV_LABELS = {
 
 function _hexToRgb(hex) {
   var h = hex.replace("#", "");
-  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
   var n = parseInt(h, 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
 function _rgbToHsl(r, g, b) {
   r /= 255; g /= 255; b /= 255;
-  var mx = Math.max(r, g, b), mn = Math.min(r, g, b);
-  var h = 0, s = 0, l = (mx + mn) / 2;
+  var mx = Math.max(r,g,b), mn = Math.min(r,g,b);
+  var hh = 0, s = 0, l = (mx+mn)/2;
   if (mx !== mn) {
-    var d = mx - mn;
-    s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
-    if (mx === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
-    else if (mx === g) h = ((b - r) / d + 2) / 6;
-    else h = ((r - g) / d + 4) / 6;
+    var d = mx-mn;
+    s = l > 0.5 ? d/(2-mx-mn) : d/(mx+mn);
+    if (mx === r) hh = ((g-b)/d+(g<b?6:0))/6;
+    else if (mx === g) hh = ((b-r)/d+2)/6;
+    else hh = ((r-g)/d+4)/6;
   }
-  return [h * 360, s * 100, l * 100];
+  return [hh*360, s*100, l*100];
 }
 
 function _hslToRgb(h, s, l) {
@@ -48,18 +48,18 @@ function _hslToRgb(h, s, l) {
   else {
     var hue2rgb = function(p, q, t) {
       if (t < 0) t += 1; if (t > 1) t -= 1;
-      if (t < 1/6) return p + (q - p) * 6 * t;
+      if (t < 1/6) return p+(q-p)*6*t;
       if (t < 1/2) return q;
-      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+      if (t < 2/3) return p+(q-p)*(2/3-t)*6;
       return p;
     };
-    var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-    var p = 2 * l - q;
-    r = hue2rgb(p, q, h + 1/3);
-    g = hue2rgb(p, q, h);
-    b = hue2rgb(p, q, h - 1/3);
+    var q = l < 0.5 ? l*(1+s) : l+s-l*s;
+    var p = 2*l-q;
+    r = hue2rgb(p,q,h+1/3);
+    g = hue2rgb(p,q,h);
+    b = hue2rgb(p,q,h-1/3);
   }
-  return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+  return [Math.round(r*255), Math.round(g*255), Math.round(b*255)];
 }
 
 function _hexToHsl(hex) {
@@ -69,97 +69,104 @@ function _hexToHsl(hex) {
 
 function _lerpHsl(hsl1, hsl2, t) {
   var h1 = hsl1[0], h2 = hsl2[0];
-  var dh = h2 - h1;
+  var dh = h2-h1;
   if (dh > 180) dh -= 360;
   if (dh < -180) dh += 360;
-  var h = h1 + dh * t;
+  var h = h1+dh*t;
   if (h < 0) h += 360;
   if (h >= 360) h -= 360;
-  return [h, hsl1[1] + (hsl2[1] - hsl1[1]) * t, hsl1[2] + (hsl2[2] - hsl1[2]) * t];
+  return [h, hsl1[1]+(hsl2[1]-hsl1[1])*t, hsl1[2]+(hsl2[2]-hsl1[2])*t];
+}
+
+function _lerpColor(c1, c2, t) {
+  return [
+    Math.round(c1[0]+(c2[0]-c1[0])*t),
+    Math.round(c1[1]+(c2[1]-c1[1])*t),
+    Math.round(c1[2]+(c2[2]-c1[2])*t)
+  ];
 }
 
 var _polPositive = _hexToRgb(T.positive);
 var _polNegative = _hexToRgb(T.negative);
 var _polNeutral  = _hexToRgb(T.neutral);
 
-function _lerpColor(c1, c2, t) {
-  return [
-    Math.round(c1[0] + (c2[0] - c1[0]) * t),
-    Math.round(c1[1] + (c2[1] - c1[1]) * t),
-    Math.round(c1[2] + (c2[2] - c1[2]) * t)
-  ];
-}
-
 function _polarityToRgb(pol) {
-  if (pol > 0.05) return _lerpColor(_polNeutral, _polPositive, Math.min(1, pol * 4));
-  if (pol < -0.05) return _lerpColor(_polNeutral, _polNegative, Math.min(1, -pol * 4));
+  if (pol > 0.05) return _lerpColor(_polNeutral, _polPositive, Math.min(1, pol*4));
+  if (pol < -0.05) return _lerpColor(_polNeutral, _polNegative, Math.min(1, -pol*4));
   return _polNeutral;
 }
 
-// ── Straight trapezoid ribbon (same-stream adjacent links) ──
-function _drawRibbon(p, sT, sB, sR, tT, tB, tL, getColor, steps) {
-  var baseCp = (tL - sR) / 3;
-  var cpT = baseCp + Math.abs(tT - sT) * 0.4;
-  var cpB = baseCp + Math.abs(tB - sB) * 0.4;
-  p.noStroke();
-  for (var si = 0; si < steps; si++) {
-    var t0 = si / steps, t1 = (si + 1) / steps, tMid = (t0 + t1) / 2;
-    var x0  = p.bezierPoint(sR, sR + cpT, tL - cpT, tL, t0);
-    var x1  = p.bezierPoint(sR, sR + cpT, tL - cpT, tL, t1);
-    var x0b = p.bezierPoint(sR, sR + cpB, tL - cpB, tL, t0);
-    var x1b = p.bezierPoint(sR, sR + cpB, tL - cpB, tL, t1);
-    var y0t = p.bezierPoint(sT, sT, tT, tT, t0);
-    var y1t = p.bezierPoint(sT, sT, tT, tT, t1);
-    var y0b = p.bezierPoint(sB, sB, tB, tB, t0);
-    var y1b = p.bezierPoint(sB, sB, tB, tB, t1);
-    var lo0 = Math.min(y0t, y0b), hi0 = Math.max(y0t, y0b);
-    var lo1 = Math.min(y1t, y1b), hi1 = Math.max(y1t, y1b);
-    p.fill(getColor(tMid));
-    p.beginShape();
-    p.vertex(x0,  lo0); p.vertex(x1,  lo1);
-    p.vertex(x1b, hi1); p.vertex(x0b, hi0);
-    p.endShape(p.CLOSE);
+// ── Ridgeline layout helper ──
+// Computes row geometry from the windowed layout.
+function _computeRidgelineLayout(lay) {
+  var numWords = lay.wordSlots.length;
+  var padTop = lay.padTop;
+  var padBottom = 10;
+  var ROW_OVERLAP = 10;
+  var availH = lay.canvasH - padTop - padBottom;
+  var ROW_STEP = numWords > 0
+    ? Math.max(5, Math.floor((availH - ROW_OVERLAP) / numWords))
+    : 20;
+  var ROW_H = ROW_STEP + ROW_OVERLAP;
+  var MAX_RISE = ROW_H + ROW_OVERLAP;
+
+  var rowYs = [];
+  for (var i = 0; i < numWords; i++) {
+    rowYs.push(padTop + i * ROW_STEP + ROW_H);
   }
+
+  return {
+    ROW_STEP: ROW_STEP,
+    ROW_H: ROW_H,
+    MAX_RISE: MAX_RISE,
+    rowYs: rowYs,
+    rowLabelH: 14
+  };
 }
 
-// ── Cosine S-curve ribbon (cross-stream links) ──
-function _drawBezierRibbon(p, sT, sB, sR, tT, tB, tL, getColor, steps) {
-  var mx = (sR + tL) / 2;
-  p.noStroke();
-  for (var si = 0; si < steps; si++) {
-    var t0 = si / steps, t1 = (si + 1) / steps, tMid = (t0 + t1) / 2;
-    var x0 = p.bezierPoint(sR, mx, mx, tL, t0);
-    var x1 = p.bezierPoint(sR, mx, mx, tL, t1);
-    var y0t = p.bezierPoint(sT, sT, tT, tT, t0);
-    var y1t = p.bezierPoint(sT, sT, tT, tT, t1);
-    var y0b = p.bezierPoint(sB, sB, tB, tB, t0);
-    var y1b = p.bezierPoint(sB, sB, tB, tB, t1);
-    p.fill(getColor(tMid));
-    p.beginShape();
-    p.vertex(x0, y0t); p.vertex(x1, y1t);
-    p.vertex(x1, y1b); p.vertex(x0, y0b);
-    p.endShape(p.CLOSE);
+// ── Waveform path builder (module-level, no closure issues) ──
+function _buildWavePath(ctx, pts, baseY) {
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, baseY);
+  ctx.lineTo(pts[0].x, pts[0].y);
+  for (var p = 1; p < pts.length; p++) {
+    var cpx = (pts[p-1].x + pts[p].x) / 2;
+    ctx.bezierCurveTo(cpx, pts[p-1].y, cpx, pts[p].y, pts[p].x, pts[p].y);
   }
+  ctx.lineTo(pts[pts.length-1].x, baseY);
+  ctx.closePath();
 }
 
-// ── Label column overlay builder ──
-// Renders the interactive word list over the padLeft zone of the P5 canvas.
-function _buildLabelOverlay(layout, seeds, lockedWords, sortMode, onWordClick) {
+// ── Label column overlay ──
+// rowGeom: { rowYs, rowLabelH } — ridgeline baseline positions.
+function _buildLabelOverlay(layout, seeds, lockedWords, sortMode, onWordClick, rowGeom) {
   var padLeft = layout.padLeft;
   var hasHL = !!(seeds && seeds.size > 0);
   var fhc = sortMode === "freq" ? T.text : T.flow;
   var rhc = sortMode === "relevance" ? T.text : T.flow;
+  var rowLabelH = rowGeom ? rowGeom.rowLabelH : 16;
 
-  var rows = layout.wordSlots.map(function(slot) {
+  var rows = layout.wordSlots.map(function(slot, idx) {
     var isSeed   = !!(seeds && seeds.has(slot.word));
     var isLocked = !!(lockedWords && lockedWords.has(slot.word));
     var isDim    = hasHL && !isSeed && !isLocked;
-    var fc = sortMode === "freq"      ? (isDim ? "#181818" : T.text) : (isDim ? "#0c1818" : T.flow);
-    var rc = sortMode === "relevance" ? (isDim ? "#181818" : T.text) : (isDim ? "#0c1818" : T.flow);
-    var wc = (isSeed || isLocked) ? T.accent : isDim ? "#222" : T.text;
-    var sc = isDim ? "#1c1c1c" : "#333";
-    var bg = (isSeed || isLocked) ? T.accent + "14" : "transparent";
-    var lb = (isSeed || isLocked) ? "2px solid " + T.accent : "2px solid transparent";
+
+    var fc = sortMode === "freq"
+      ? (isDim ? "#181818" : T.text)
+      : (isDim ? "#0c1818" : T.flow);
+    var rc = sortMode === "relevance"
+      ? (isDim ? "#181818" : T.text)
+      : (isDim ? "#0c1818" : T.flow);
+    var wc  = (isSeed || isLocked) ? T.accent : isDim ? "#222" : T.text;
+    var sc  = isDim ? "#1c1c1c" : "#333";
+    var bg  = (isSeed || isLocked) ? T.accent + "14" : "transparent";
+    var lb  = (isSeed || isLocked) ? "2px solid " + T.accent : "2px solid transparent";
+
+    var topY = rowGeom ? rowGeom.rowYs[idx] - rowLabelH : slot.y;
+    var ht   = rowGeom ? rowLabelH : slot.slotH;
+    var ai   = rowGeom ? "flex-end" : "center";
+    var pb   = rowGeom ? "1px" : "0";
+
     return React.createElement("div", {
       key: slot.word,
       onClick: function(ev) {
@@ -167,13 +174,10 @@ function _buildLabelOverlay(layout, seeds, lockedWords, sortMode, onWordClick) {
         if (onWordClick) onWordClick(slot.word);
       },
       style: {
-        position: "absolute",
-        top: slot.y, left: 0, right: 0,
-        height: slot.slotH,
-        display: "flex", alignItems: "center",
+        position: "absolute", top: topY, left: 0, right: 0, height: ht,
+        display: "flex", alignItems: ai, paddingBottom: pb,
         background: bg, borderLeft: lb,
-        cursor: "pointer", boxSizing: "border-box",
-        fontFamily: T.fontMono
+        cursor: "pointer", boxSizing: "border-box", fontFamily: T.fontMono
       }
     },
       React.createElement("div", {
@@ -193,397 +197,298 @@ function _buildLabelOverlay(layout, seeds, lockedWords, sortMode, onWordClick) {
     );
   });
 
+  // Header — column hints aligned with value columns
+  var header = React.createElement("div", {
+    style: {
+      position: "absolute", top: 0, left: 0, right: 0, height: layout.padTop,
+      display: "flex", alignItems: "flex-end", paddingBottom: 1,
+      fontFamily: T.fontMono
+    }
+  },
+    React.createElement("div", { style: { width: 74, display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 5, flexShrink: 0 } },
+      React.createElement("span", { style: { fontSize: 8, color: fhc, minWidth: 20, textAlign: "right" } }, "frec"),
+      React.createElement("span", { style: { fontSize: 8, color: T.textDim, padding: "0 2px" } }, "|"),
+      React.createElement("span", { style: { fontSize: 8, color: rhc, minWidth: 26, textAlign: "right" } }, "rel")
+    )
+  );
+
   return React.createElement("div", {
     style: {
       position: "absolute", top: 0, left: 0,
       width: padLeft, height: layout.canvasH,
-      background: T.bgDeep,
-      borderRight: "1px solid " + T.border,
+      background: T.bgDeep, borderRight: "1px solid " + T.border,
       overflow: "hidden", zIndex: 2
     }
-  },
-    React.createElement("div", {
-      style: {
-        position: "absolute", top: 0, right: 7,
-        height: layout.padTop, display: "flex", alignItems: "center",
-        fontFamily: T.fontMono
-      }
-    },
-      React.createElement("span", { style: { fontSize: 8, color: fhc, minWidth: 20, textAlign: "right", lineHeight: 1 } }, "frec"),
-      React.createElement("span", { style: { fontSize: 8, color: T.textDim, padding: "0 2px", lineHeight: 1 } }, "|"),
-      React.createElement("span", { style: { fontSize: 8, color: rhc, minWidth: 26, textAlign: "right", lineHeight: 1 } }, "rel")
-    ),
-    rows
-  );
+  }, header, rows);
 }
 
 // ════════════════════════════════════════════
-// FibrasChart — P5 canvas
+// FibrasChart — HTML5 Canvas ridgeline
 // ════════════════════════════════════════════
 function FibrasChart(props) {
   var containerRef = useRef(null);
-  var p5Ref        = useRef(null);
+  var canvasRef    = useRef(null);
   var propsRef     = useRef(props);
   propsRef.current = props;
 
-  var _hs = useState(null); var hoveredStream = _hs[0], setHoveredStream = _hs[1];
-  var _hn = useState(null); var hoveredNode = _hn[0], setHoveredNode = _hn[1];
-  var _tt = useState(null); var tooltipData = _tt[0], setTooltipData = _tt[1];
-  var _pt = useState(null); var pinnedTooltip = _pt[0], setPinnedTooltip = _pt[1];
+  var hovWordRef = useRef(null);
+  var drawRef    = useRef(null);
 
-  var hoveredStreamRef = useRef(null);
-  var hoveredNodeRef   = useRef(null);
-  var pinnedTooltipRef = useRef(null);
+  var _hw = useState(null); var hovWord = _hw[0], setHovWord = _hw[1];
 
-  useEffect(function() {
-    if (props.onRegisterClear) {
-      props.onRegisterClear(function() {
-        pinnedTooltipRef.current = null;
-        setPinnedTooltip(null);
-        if (p5Ref.current) p5Ref.current.redraw();
-      });
+  // ── Draw ──
+  function draw() {
+    var canvas = canvasRef.current;
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    var lay = propsRef.current.layout;
+    if (!lay) return;
+
+    var seeds  = propsRef.current.seeds;
+    var locked = propsRef.current.lockedWords;
+    var ridge  = _computeRidgelineLayout(lay);
+    var MAX_RISE = ridge.MAX_RISE;
+    var rowYs    = ridge.rowYs;
+
+    var hasHL = !!(seeds && seeds.size > 0) || !!(locked && locked.size > 0);
+    function isWordActive(w) {
+      if (!hasHL) return true;
+      if (seeds  && seeds.has(w))  return true;
+      if (locked && locked.has(w)) return true;
+      return false;
     }
-  }, [props.onRegisterClear]);
 
+    ctx.clearRect(0, 0, lay.canvasW, lay.canvasH);
+    ctx.fillStyle = '#111';
+    ctx.fillRect(0, 0, lay.canvasW, lay.canvasH);
+
+    // Column guidelines
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+    for (var g = 0; g < lay.columns.length; g++) {
+      ctx.beginPath();
+      ctx.moveTo(lay.columns[g].x, 0);
+      ctx.lineTo(lay.columns[g].x, lay.canvasH);
+      ctx.stroke();
+    }
+
+    // Draw bottom row first so top row renders on top
+    for (var ri = lay.wordSlots.length - 1; ri >= 0; ri--) {
+      var slot   = lay.wordSlots[ri];
+      var rank   = ri;
+      var active = isWordActive(slot.word);
+      var isDim  = hasHL && !active;
+      var isHov  = hovWordRef.current === slot.word;
+      var baseY  = rowYs[rank];
+      var col    = slot.color;
+
+      // Build waveform points from node data
+      var pts = [];
+      for (var c = 0; c < lay.numCols; c++) {
+        var nd = slot.nodes[c];
+        var normAct = nd ? nd.primaryNorm : 0;
+        pts.push({
+          x:    lay.columns[c].x,
+          y:    baseY - normAct * MAX_RISE,
+          prov: nd ? nd.provenance : null
+        });
+      }
+
+      if (!isDim) {
+        // 1. Partial occlusion — dark waveform shape partially hides row below
+        ctx.save();
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 0.62;
+        ctx.fillStyle = '#111';
+        _buildWavePath(ctx, pts, baseY);
+        ctx.fill();
+        ctx.restore();
+
+        // 2. Ghost fill — lighter blend, always present trace
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = 0.24;
+        ctx.fillStyle = col;
+        _buildWavePath(ctx, pts, baseY);
+        ctx.fill();
+        ctx.restore();
+
+        // 3. Direct fill — lighter blend, higher alpha, only direct segments
+        for (var ds = 0; ds < lay.numCols - 1; ds++) {
+          if (pts[ds].prov !== "directo" && pts[ds+1].prov !== "directo") continue;
+          (function(p0, p1, bY, cl) {
+            var cpx = (p0.x + p1.x) / 2;
+            ctx.save();
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.globalAlpha = 0.60;
+            ctx.fillStyle = cl;
+            ctx.beginPath();
+            ctx.moveTo(p0.x, bY);
+            ctx.lineTo(p0.x, p0.y);
+            ctx.bezierCurveTo(cpx, p0.y, cpx, p1.y, p1.x, p1.y);
+            ctx.lineTo(p1.x, bY);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+          })(pts[ds], pts[ds+1], baseY, col);
+        }
+      }
+
+      // 4. Stroke — segment by segment, direct brighter than ghost
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-over';
+      for (var ss = 0; ss < lay.numCols - 1; ss++) {
+        var isDirect = pts[ss].prov === "directo" || pts[ss+1].prov === "directo";
+        ctx.globalAlpha = isDim ? 0.12 : (isDirect ? 0.90 : 0.25);
+        ctx.strokeStyle = col;
+        ctx.lineWidth = isHov ? 2.2 : 1.2;
+        ctx.setLineDash([]);
+        var cpx2 = (pts[ss].x + pts[ss+1].x) / 2;
+        ctx.beginPath();
+        ctx.moveTo(pts[ss].x, pts[ss].y);
+        ctx.bezierCurveTo(cpx2, pts[ss].y, cpx2, pts[ss+1].y, pts[ss+1].x, pts[ss+1].y);
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      // 5. Row baseline rule
+      ctx.save();
+      ctx.globalAlpha = isDim ? 0.05 : 0.13;
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 0.5;
+      ctx.setLineDash([2, 4]);
+      ctx.beginPath();
+      ctx.moveTo(lay.padLeft, baseY);
+      ctx.lineTo(lay.canvasW - 20, baseY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+
+      // 6. Dots at direct-presence segment peaks
+      if (!isDim) {
+        for (var sd = 0; sd < lay.numCols; sd++) {
+          if (pts[sd].prov !== "directo" || pts[sd].y >= baseY - 1) continue;
+          ctx.save();
+          ctx.globalAlpha = 0.9;
+          ctx.fillStyle = col;
+          ctx.beginPath();
+          ctx.arc(pts[sd].x, pts[sd].y, isHov ? 3 : 1.8, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+    }
+
+    // Hovered word label on canvas
+    if (hovWordRef.current) {
+      for (var hwi = 0; hwi < lay.wordSlots.length; hwi++) {
+        if (lay.wordSlots[hwi].word !== hovWordRef.current) continue;
+        var hslot = lay.wordSlots[hwi];
+        var hrank = hwi;
+        var maxNorm = 0, maxCol = 0;
+        for (var hc = 0; hc < lay.numCols; hc++) {
+          var hn = hslot.nodes[hc];
+          if (hn && hn.primaryNorm > maxNorm) { maxNorm = hn.primaryNorm; maxCol = hc; }
+        }
+        var labelY = rowYs[hrank] - maxNorm * MAX_RISE - 6;
+        ctx.save();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = hslot.color;
+        ctx.font = 'bold 9px Roboto Mono';
+        ctx.textAlign = 'center';
+        ctx.fillText(hslot.word, lay.columns[maxCol].x, Math.max(12, labelY));
+        ctx.restore();
+        break;
+      }
+    }
+  }
+
+  drawRef.current = draw;
+
+  // ── Mount canvas and attach events ──
   useEffect(function() {
     if (!containerRef.current || !propsRef.current.layout) return;
-    if (p5Ref.current) { p5Ref.current.remove(); p5Ref.current = null; }
 
-    var sketch = function(p) {
-      p.setup = function() {
-        p.createCanvas(
-          propsRef.current.layout.canvasW,
-          propsRef.current.layout.canvasH
-        ).style("display", "block");
-        p.textFont("Roboto Mono");
-        p.noLoop();
-        p.colorMode(p.RGB, 255, 255, 255, 1);
-      };
+    // Clear previous canvas
+    while (containerRef.current.firstChild) {
+      containerRef.current.removeChild(containerRef.current.firstChild);
+    }
 
-      p.draw = function() {
-        var lay    = propsRef.current.layout;
-        var locked = propsRef.current.lockedWords;
-        if (!lay) return;
+    var lay = propsRef.current.layout;
+    var canvas = document.createElement('canvas');
+    canvas.width  = lay.canvasW;
+    canvas.height = lay.canvasH;
+    canvas.style.display = 'block';
 
-        var hs = hoveredStreamRef.current;
-        var hn = hoveredNodeRef.current;
-        var pt = pinnedTooltipRef.current;
+    canvas.addEventListener('mousemove', function(ev) {
+      var curLay = propsRef.current.layout;
+      if (!curLay) return;
+      var rect = canvas.getBoundingClientRect();
+      var scale = curLay.canvasW / rect.width;
+      var mx = (ev.clientX - rect.left) * scale;
+      var my = (ev.clientY - rect.top)  * scale;
 
-        var hasHL = !!(hs || (locked && locked.size > 0));
-
-        function isWordActive(w) {
-          if (!hasHL) return true;
-          if (w === hs) return true;
-          if (locked && locked.has(w)) return true;
-          if (propsRef.current.seeds && propsRef.current.seeds.has(w)) return true;
-          return false;
+      // Ignore padLeft zone — handled by React overlay
+      if (mx < curLay.padLeft) {
+        if (hovWordRef.current !== null) {
+          hovWordRef.current = null; setHovWord(null); drawRef.current();
         }
+        return;
+      }
 
-        p.background(17);
-
-        p.stroke(255, 255, 255, 0.20); p.strokeWeight(1);
-        for (var gi = 0; gi < lay.columns.length; gi++) {
-          p.line(lay.columns[gi].x, 0, lay.columns[gi].x, lay.canvasH);
+      var ridge2   = _computeRidgelineLayout(curLay);
+      var rowYs2   = ridge2.rowYs;
+      var MAX_RISE2 = ridge2.MAX_RISE;
+      var best = null, bd = Infinity;
+      for (var wi = 0; wi < curLay.wordSlots.length; wi++) {
+        var sl2 = curLay.wordSlots[wi];
+        for (var c2 = 0; c2 < curLay.numCols; c2++) {
+          var nd2 = sl2.nodes[c2];
+          if (!nd2) continue;
+          var px = curLay.columns[c2].x;
+          var py = rowYs2[wi] - nd2.primaryNorm * MAX_RISE2;
+          var d  = (mx-px)*(mx-px) + (my-py)*(my-py);
+          if (d < bd && d < 900) { bd = d; best = sl2.word; }
         }
-        p.noStroke();
+      }
+      if (best !== hovWordRef.current) {
+        hovWordRef.current = best; setHovWord(best); drawRef.current();
+      }
+    });
 
-        for (var wi = lay.wordSlots.length - 1; wi >= 0; wi--) {
-          var slot = lay.wordSlots[wi];
-          var hsl  = _hexToHsl(slot.color);
-          var natL = hsl[2];
-          var active = isWordActive(slot.word);
+    canvas.addEventListener('mouseleave', function() {
+      hovWordRef.current = null; setHovWord(null); drawRef.current();
+    });
 
-          // Compute HSL lightness for a node given its secondaryNorm and active state.
-          // Active: L ranges from 20 (low secondary) up to the color's natural L (high secondary).
-          // Dimmed: L = 7 (near-black, fully opaque — no transparency stacking).
-          function nodeL(secondaryNorm, isActive) {
-            return isActive ? (20 + secondaryNorm * Math.max(0, natL - 20)) : 7;
-          }
-          function nodeRgb(secondaryNorm, isActive) {
-            var L = nodeL(secondaryNorm, isActive);
-            return _hslToRgb(hsl[0], hsl[1], L);
-          }
-
-          for (var ci = 0; ci < lay.numCols - 1; ci++) {
-            var src = slot.nodes[ci];
-            var tgt = slot.nodes[ci + 1];
-
-            if (src.isReal && !tgt.isReal) {
-              var isCrossSrc = false;
-              for (var xci = 0; xci < lay.crossLinks.length; xci++) {
-                if (lay.crossLinks[xci].srcSlotIdx === wi && lay.crossLinks[xci].srcCol === ci) { isCrossSrc = true; break; }
-              }
-              if (!isCrossSrc) {
-                var gX = tgt.x, gCy = tgt.y + (slot.slotH / 2), gH = Math.max(2, src.h * 0.3);
-                var gT = gCy - gH / 2, gB = gCy + gH / 2;
-                (function(src, gT, gB, gX, hsl, natL, active) {
-                  var sL = nodeL(src.secondaryNorm, active);
-                  _drawRibbon(p, src.y, src.y + src.h, src.x + src.w, gT, gB, gX,
-                    function(t) {
-                      var L = Math.max(0, sL * (1 - t));
-                      var c = _hslToRgb(hsl[0], hsl[1], L);
-                      return p.color(c[0], c[1], c[2], 1.0);
-                    }, 16);
-                })(src, gT, gB, gX, hsl, natL, active);
-              }
-              continue;
-            }
-
-            if (!src.isReal && tgt.isReal) {
-              var isCrossTgt = false;
-              for (var xcj = 0; xcj < lay.crossLinks.length; xcj++) {
-                if (lay.crossLinks[xcj].tgtSlotIdx === wi && lay.crossLinks[xcj].tgtCol === ci + 1) { isCrossTgt = true; break; }
-              }
-              if (!isCrossTgt) {
-                var gX2 = src.x + src.w, gCy2 = src.y + (slot.slotH / 2), gH2 = Math.max(2, tgt.h * 0.3);
-                var gT2 = gCy2 - gH2 / 2, gB2 = gCy2 + gH2 / 2;
-                (function(tgt, gT2, gB2, gX2, hsl, natL, active) {
-                  var tL = nodeL(tgt.secondaryNorm, active);
-                  _drawRibbon(p, gT2, gB2, gX2, tgt.y, tgt.y + tgt.h, tgt.x,
-                    function(t) {
-                      var L = Math.max(0, tL * t);
-                      var c = _hslToRgb(hsl[0], hsl[1], L);
-                      return p.color(c[0], c[1], c[2], 1.0);
-                    }, 16);
-                })(tgt, gT2, gB2, gX2, hsl, natL, active);
-              }
-              continue;
-            }
-
-            if (!src.isReal || !tgt.isReal) continue;
-            (function(src, tgt, hsl, natL, active) {
-              var sL = nodeL(src.secondaryNorm, active);
-              var tL = nodeL(tgt.secondaryNorm, active);
-              _drawRibbon(p, src.y, src.y + src.h, src.x + src.w, tgt.y, tgt.y + tgt.h, tgt.x,
-                function(t) {
-                  var L = sL + (tL - sL) * t;
-                  var c = _hslToRgb(hsl[0], hsl[1], L);
-                  return p.color(c[0], c[1], c[2], 1.0);
-                }, 16);
-            })(src, tgt, hsl, natL, active);
-          }
-
-          for (var ni = 0; ni < slot.nodes.length; ni++) {
-            var nd = slot.nodes[ni];
-            if (!nd.isReal) continue;
-            var ndC = nodeRgb(nd.secondaryNorm, active);
-            p.fill(p.color(ndC[0], ndC[1], ndC[2], 1.0));
-            p.noStroke();
-            p.rect(nd.x, nd.y, nd.w, nd.h);
-          }
-          // Word labels removed — replaced by React label column overlay
-        }
-
-        if (lay.crossLinks) {
-          for (var cli = 0; cli < lay.crossLinks.length; cli++) {
-            var cl = lay.crossLinks[cli];
-            var clActive = isWordActive(cl.srcWord) || isWordActive(cl.tgtWord);
-            var cs = cl.srcNode, ct = cl.tgtNode;
-            var srcHsl = _hexToHsl(cl.srcColor), tgtHsl = _hexToHsl(cl.tgtColor);
-            var srcNatL = srcHsl[2], tgtNatL = tgtHsl[2];
-            (function(cs, ct, srcHsl, tgtHsl, srcNatL, tgtNatL, clActive) {
-              var sL = clActive ? (20 + cs.secondaryNorm * Math.max(0, srcNatL - 20)) : 7;
-              var tL = clActive ? (20 + ct.secondaryNorm * Math.max(0, tgtNatL - 20)) : 7;
-              _drawBezierRibbon(p, cs.y, cs.y + cs.h, cs.x + cs.w, ct.y, ct.y + ct.h, ct.x,
-                function(t) {
-                  var mh = _lerpHsl(srcHsl, tgtHsl, t);
-                  var L = sL + (tL - sL) * t;
-                  var c = _hslToRgb(mh[0], mh[1], L);
-                  return p.color(c[0], c[1], c[2], 1.0);
-                }, 16);
-            })(cs, ct, srcHsl, tgtHsl, srcNatL, tgtNatL, clActive);
-          }
-        }
-
-        var accentRgb = _hexToRgb(T.accent);
-        for (var wi2 = 0; wi2 < lay.wordSlots.length; wi2++) {
-          var slot2 = lay.wordSlots[wi2];
-          for (var ni2 = 0; ni2 < slot2.nodes.length; ni2++) {
-            var nd2 = slot2.nodes[ni2];
-            if (!nd2.isReal) continue;
-            var isNodeHov = hn && hn.wi === wi2 && hn.ni === ni2;
-            var isNodePin = pt && pt.wi === wi2 && pt.ni === ni2;
-            var isLocked  = locked && locked.has(slot2.word);
-            p.noStroke();
-            p.fill(p.color(255, 255, 255, isNodeHov || isNodePin || isLocked ? 1.0 : 0.5));
-            var r = isNodeHov || isNodePin ? 10 : 5;
-            p.ellipse(nd2.x + nd2.w / 2, nd2.y + nd2.h / 2, r, r);
-            if (isNodePin) {
-              p.noFill();
-              p.stroke(p.color(accentRgb[0], accentRgb[1], accentRgb[2], 1.0));
-              p.strokeWeight(1);
-              p.ellipse(nd2.x + nd2.w / 2, nd2.y + nd2.h / 2, 16, 16);
-              p.noStroke();
-            }
-          }
-        }
-      };
-
-      p.mouseMoved = function() {
-        var lay = propsRef.current.layout;
-        if (!lay) return;
-        var mx = p.mouseX, my = p.mouseY;
-        if (mx < 0 || mx > lay.canvasW || my < 0 || my > lay.canvasH) {
-          hoveredStreamRef.current = null; setHoveredStream(null);
-          hoveredNodeRef.current   = null; setHoveredNode(null);
-          setTooltipData(null);
-          p.redraw(); return;
-        }
-        // Ignore mouse events in the label column zone
-        if (mx < lay.padLeft) {
-          hoveredStreamRef.current = null; setHoveredStream(null);
-          hoveredNodeRef.current   = null; setHoveredNode(null);
-          setTooltipData(null);
-          p.redraw(); return;
-        }
-        var HIT = 7;
-
-        for (var wi = 0; wi < lay.wordSlots.length; wi++) {
-          var slot = lay.wordSlots[wi];
-          for (var ni = 0; ni < slot.nodes.length; ni++) {
-            var nd = slot.nodes[ni];
-            if (!nd.isReal) continue;
-            var cx = nd.x + nd.w / 2, cy = nd.y + nd.h / 2;
-            var dx = mx - cx, dy = my - cy;
-            if (dx * dx + dy * dy < HIT * HIT) {
-              var rect = containerRef.current.getBoundingClientRect();
-              var newHn = { wi: wi, ni: ni };
-              hoveredNodeRef.current   = newHn;   setHoveredNode(newHn);
-              hoveredStreamRef.current = null;     setHoveredStream(null);
-              setTooltipData({ word: slot.word, nd: nd, wi: wi, ni: ni,
-                mx: p.mouseX + rect.left, my: p.mouseY + rect.top });
-              p.redraw(); return;
-            }
-          }
-        }
-
-        for (var wi2 = 0; wi2 < lay.wordSlots.length; wi2++) {
-          var slot2 = lay.wordSlots[wi2];
-          for (var li = 0; li < slot2.links.length; li++) {
-            var lk = slot2.links[li];
-            var lxMin = lk.srcNode.x + lk.srcNode.w, lxMax = lk.tgtNode.x;
-            var lyMin = Math.min(lk.srcNode.y, lk.tgtNode.y);
-            var lyMax = Math.max(lk.srcNode.y + lk.srcNode.h, lk.tgtNode.y + lk.tgtNode.h);
-            if (mx >= lxMin && mx <= lxMax && my >= lyMin && my <= lyMax) {
-              hoveredStreamRef.current = slot2.word; setHoveredStream(slot2.word);
-              hoveredNodeRef.current   = null;       setHoveredNode(null);
-              setTooltipData(null);
-              p.redraw(); return;
-            }
-          }
-        }
-
-        hoveredStreamRef.current = null; setHoveredStream(null);
-        hoveredNodeRef.current   = null; setHoveredNode(null);
-        setTooltipData(null);
-        p.redraw();
-      };
-
-      p.mousePressed = function() {
-        var lay = propsRef.current.layout;
-        if (!lay) return;
-        var mx = p.mouseX, my = p.mouseY;
-        if (mx < 0 || mx > lay.canvasW || my < 0 || my > lay.canvasH) return;
-        // Ignore clicks in label column zone — handled by React overlay
-        if (mx < lay.padLeft) return;
-        var HIT = 7;
-
-        for (var wi = 0; wi < lay.wordSlots.length; wi++) {
-          var slot = lay.wordSlots[wi];
-          for (var ni = 0; ni < slot.nodes.length; ni++) {
-            var nd = slot.nodes[ni];
-            if (!nd.isReal) continue;
-            var cx = nd.x + nd.w / 2, cy = nd.y + nd.h / 2;
-            var dx = mx - cx, dy = my - cy;
-            if (dx * dx + dy * dy < HIT * HIT) {
-              var cur = pinnedTooltipRef.current;
-              if (cur && cur.wi === wi && cur.ni === ni) {
-                pinnedTooltipRef.current = null; setPinnedTooltip(null);
-              } else {
-                var rect = containerRef.current.getBoundingClientRect();
-                var pin = { word: slot.word, nd: nd, wi: wi, ni: ni,
-                  mx: p.mouseX + rect.left, my: p.mouseY + rect.top };
-                pinnedTooltipRef.current = pin; setPinnedTooltip(pin);
-              }
-              p.redraw(); return;
-            }
-          }
-        }
-
-        for (var wi2 = 0; wi2 < lay.wordSlots.length; wi2++) {
-          var slot2 = lay.wordSlots[wi2];
-          for (var li = 0; li < slot2.links.length; li++) {
-            var lk = slot2.links[li];
-            var lxMin = lk.srcNode.x + lk.srcNode.w, lxMax = lk.tgtNode.x;
-            var lyMin = Math.min(lk.srcNode.y, lk.tgtNode.y);
-            var lyMax = Math.max(lk.srcNode.y + lk.srcNode.h, lk.tgtNode.y + lk.tgtNode.h);
-            if (mx >= lxMin && mx <= lxMax && my >= lyMin && my <= lyMax) {
-              if (propsRef.current.toggleLocked) propsRef.current.toggleLocked(slot2.word);
-              p.redraw(); return;
-            }
-          }
-        }
-
-        // Elsewhere → clear all pins and locks
+    canvas.addEventListener('click', function(ev) {
+      var curLay = propsRef.current.layout;
+      if (!curLay) return;
+      var rect = canvas.getBoundingClientRect();
+      var mx = (ev.clientX - rect.left) * (curLay.canvasW / rect.width);
+      if (mx < curLay.padLeft) return;
+      if (hovWordRef.current) {
+        if (propsRef.current.toggleLocked) propsRef.current.toggleLocked(hovWordRef.current);
+      } else {
         if (propsRef.current.clearAllPins) propsRef.current.clearAllPins();
-        if (propsRef.current.clearLocked) propsRef.current.clearLocked();
-        pinnedTooltipRef.current = null; setPinnedTooltip(null);
-        p.redraw();
-      };
-    };
+        if (propsRef.current.clearLocked)  propsRef.current.clearLocked();
+      }
+      drawRef.current();
+    });
 
-    p5Ref.current = new p5(sketch, containerRef.current);
-    return function() {
-      if (p5Ref.current) { p5Ref.current.remove(); p5Ref.current = null; }
-    };
+    containerRef.current.appendChild(canvas);
+    canvasRef.current = canvas;
+    drawRef.current();
+
+    return function() { canvasRef.current = null; };
   }, [props.layout]);
 
   useEffect(function() {
-    if (p5Ref.current) p5Ref.current.redraw();
+    drawRef.current();
   }, [props.lockedWords, props.seeds, props.enabledEmos]);
 
-  function buildTipEl(data, pinned) {
-    if (!data) return null;
-    var nd = data.nd;
-    var prov = nd.provenance || "directo";
-    var provColor = prov === "directo" ? T.positive : prov === "vectorial" ? T.arousal : T.flow;
-    var srcLine = null;
-    if (nd.provenanceSource) {
-      if (prov === "vectorial") {
-        srcLine = React.createElement("div", { style: { fontSize: 9, color: T.textMid, marginTop: 2 } },
-          "desde ", React.createElement("span", { style: { color: T.arousal } }, nd.provenanceSource),
-          " \u00B7 sim: " + nd.provenanceSim.toFixed(2));
-      } else if (prov === "semantico") {
-        srcLine = React.createElement("div", { style: { fontSize: 9, color: T.textMid, marginTop: 2 } },
-          "desde ", React.createElement("span", { style: { color: T.flow } }, nd.provenanceSource));
-      }
-    }
-    return React.createElement("div", {
-      style: {
-        position: "fixed", pointerEvents: "none", zIndex: 100,
-        left: data.mx + 14, top: data.my - 10,
-        background: T.bgCard,
-        border: "1px solid " + (pinned ? T.accent : T.borderLight),
-        borderRadius: T.radius4, padding: T.pad8,
-        fontFamily: T.fontMono, fontSize: T.fs10, color: T.text,
-        lineHeight: 1.7, backdropFilter: "blur(2px)", whiteSpace: "nowrap"
-      }
-    },
-      React.createElement("div", { style: { color: T.accent, fontSize: 9, marginBottom: 2 } },
-        data.word + " \u00B7 S" + (nd.segIdx + 1)),
-      React.createElement("div", { style: { color: T.textMid } },
-        "Frecuencia ", React.createElement("span", { style: { color: T.text } },
-          nd.primary !== undefined ? String(Math.round(nd.primary)) : "\u2014")),
-      React.createElement("div", { style: { color: T.textMid } },
-        "Relevancia ", React.createElement("span", { style: { color: T.text } },
-          nd.secondary !== undefined ? nd.secondary.toFixed(3) : "\u2014")),
-      React.createElement("div", { style: { color: provColor, fontSize: 9, marginTop: 3 } },
-        "\u2B21 " + (_PROV_LABELS[prov] || prov)),
-      srcLine
-    );
-  }
+  var rowGeom = props.layout ? _computeRidgelineLayout(props.layout) : null;
 
-  // Outer div gets border/radius/overflow so label overlay aligns flush with canvas top
   return React.createElement("div", {
     style: {
       position: "relative",
@@ -598,10 +503,10 @@ function FibrasChart(props) {
       style: { background: T.bg }
     }),
     props.layout && _buildLabelOverlay(
-      props.layout, props.seeds, props.lockedWords, props.sortMode, props.onWordClick
-    ),
-    buildTipEl(tooltipData, false),
-    buildTipEl(pinnedTooltip, true)
+      props.layout, props.seeds, props.lockedWords,
+      props.sortMode, props.onWordClick,
+      rowGeom ? { rowYs: rowGeom.rowYs, rowLabelH: rowGeom.rowLabelH } : null
+    )
   );
 }
 
@@ -730,7 +635,7 @@ function FibrasMinimap(props) {
             stroke: "white", strokeWidth: 1.5, opacity: 0.8 });
         }),
         segW > 14 && segArousal.map(function(val, i) {
-          return React.createElement("text", { key: "l" + i,
+          return React.createElement("text", { key: "l"+i,
             x: i * segW + segW / 2, y: barH - 3, textAnchor: "middle",
             fontSize: Math.min(9, segW * 0.5), fontFamily: T.fontMono,
             fill: "rgba(255,255,255,0.35)"
@@ -876,8 +781,7 @@ function FibrasDocStack(props) {
   function clearAllPins() {
     setMmPinned(null); setMmTip(null);
     setEmPinned(null); setEmTip(null);
-    setSegPinned(null);
-    setSegTooltip(null);
+    setSegPinned(null); setSegTooltip(null);
   }
 
   clearAllPinsRef.current = clearAllPins;
@@ -898,7 +802,6 @@ function FibrasDocStack(props) {
 
   if (!fibras) return null;
 
-  // padLeft comes from layout (set in buildWindowedLayout in fibras-data.js)
   var padLeft    = layout ? layout.padLeft : 80;
   var padRight   = 20;
   var chartAreaW = canvasW - padLeft - padRight;
@@ -916,7 +819,6 @@ function FibrasDocStack(props) {
       style: { fontSize: T.fs10, color: T.textMid, fontFamily: T.fontMono }
     }, props.docLabel),
 
-    // Minimap: offset so bar aligns with chart area (nav buttons sit in padLeft zone)
     React.createElement("div", { style: { marginLeft: padLeft - 32 } },
       React.createElement(FibrasMinimap, {
         numSegs: fibras.numSegs, winStart: winStart, winSize: winSize,
@@ -1015,7 +917,7 @@ function FibrasMultiDoc(props) {
   }
 
   if (selectedArr.length === 1 || compareMode !== "stack") {
-    var id = selectedArr[0];
+    var id  = selectedArr[0];
     var doc = docById(id);
     return React.createElement(FibrasDocStack, {
       fibras: fibrasDataMap[id], seeds: seeds, enabledEmos: enabledEmos,
